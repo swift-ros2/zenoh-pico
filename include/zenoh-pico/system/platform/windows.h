@@ -60,7 +60,14 @@ typedef struct {
     } _ep;
 } _z_sys_net_endpoint_t;
 
+// MSVC's cl.exe does not understand GCC-style `__asm__("nop")` (used by
+// ZP_ASM_NOP in config.h), so a stub function is provided to swallow the
+// call as a no-op. clang and gcc both accept `__asm__` natively as
+// inline assembly, and clang in particular rejects defining a function
+// named `__asm__` — so the stub is guarded to MSVC only.
+#if defined(_MSC_VER) && !defined(__clang__) && !defined(__GNUC__)
 inline void __asm__(char *instruction) { (void)(instruction); }
+#endif
 
 #ifdef __cplusplus
 }
