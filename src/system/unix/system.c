@@ -114,7 +114,21 @@ z_result_t _z_task_join(_z_task_t *task) { _Z_CHECK_SYS_ERR(pthread_join(*task, 
 
 z_result_t _z_task_detach(_z_task_t *task) { _Z_CHECK_SYS_ERR(pthread_detach(*task)); }
 
-z_result_t _z_task_cancel(_z_task_t *task) { _Z_CHECK_SYS_ERR(pthread_cancel(*task)); }
+z_result_t _z_task_cancel(_z_task_t *task) {
+#if defined(ZENOH_ANDROID)
+    // Android's Bionic libc does not implement pthread_cancel (it's
+    // considered unsafe and was deliberately omitted). There is no
+    // drop-in replacement; a signal-based fallback would require a
+    // separate cancellation design. Return success as a best-effort
+    // no-op so callers that treat cancellation as advisory keep
+    // working. Tasks are still reachable via _z_task_join() /
+    // _z_task_detach().
+    (void)task;
+    return _Z_RES_OK;
+#else
+    _Z_CHECK_SYS_ERR(pthread_cancel(*task));
+#endif
+}
 
 void _z_task_exit(void) { pthread_exit(NULL); }
 
