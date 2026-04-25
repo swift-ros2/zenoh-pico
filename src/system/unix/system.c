@@ -21,7 +21,7 @@
 
 #include "zenoh-pico/utils/result.h"
 
-#if defined(ZENOH_LINUX)
+#if defined(ZENOH_LINUX) || defined(ZENOH_ANDROID)
 #include <sys/random.h>
 #include <sys/time.h>
 #endif
@@ -35,7 +35,7 @@
 /*------------------ Random ------------------*/
 uint8_t z_random_u8(void) {
     uint8_t ret = 0;
-#if defined(ZENOH_LINUX)
+#if defined(ZENOH_LINUX) || defined(ZENOH_ANDROID)
     while (getrandom(&ret, sizeof(uint8_t), 0) <= 0) {
         ZP_ASM_NOP;
     }
@@ -48,7 +48,7 @@ uint8_t z_random_u8(void) {
 
 uint16_t z_random_u16(void) {
     uint16_t ret = 0;
-#if defined(ZENOH_LINUX)
+#if defined(ZENOH_LINUX) || defined(ZENOH_ANDROID)
     while (getrandom(&ret, sizeof(uint16_t), 0) <= 0) {
         ZP_ASM_NOP;
     }
@@ -61,7 +61,7 @@ uint16_t z_random_u16(void) {
 
 uint32_t z_random_u32(void) {
     uint32_t ret = 0;
-#if defined(ZENOH_LINUX)
+#if defined(ZENOH_LINUX) || defined(ZENOH_ANDROID)
     while (getrandom(&ret, sizeof(uint32_t), 0) <= 0) {
         ZP_ASM_NOP;
     }
@@ -74,7 +74,7 @@ uint32_t z_random_u32(void) {
 
 uint64_t z_random_u64(void) {
     uint64_t ret = 0;
-#if defined(ZENOH_LINUX)
+#if defined(ZENOH_LINUX) || defined(ZENOH_ANDROID)
     while (getrandom(&ret, sizeof(uint64_t), 0) <= 0) {
         ZP_ASM_NOP;
     }
@@ -88,7 +88,7 @@ uint64_t z_random_u64(void) {
 }
 
 void z_random_fill(void *buf, size_t len) {
-#if defined(ZENOH_LINUX)
+#if defined(ZENOH_LINUX) || defined(ZENOH_ANDROID)
     while (getrandom(buf, len, 0) <= 0) {
         ZP_ASM_NOP;
     }
