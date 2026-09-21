@@ -23,7 +23,11 @@ int main(void) {
 #if defined(__APPLE__)
     task_events_info_data_t before, after;
     mach_msg_type_number_t info_count = TASK_EVENTS_INFO_COUNT;
-    task_info(mach_task_self(), TASK_EVENTS_INFO, (task_info_t)&before, &info_count);
+    kern_return_t kr = task_info(mach_task_self(), TASK_EVENTS_INFO, (task_info_t)&before, &info_count);
+    if (kr != KERN_SUCCESS) {
+        fprintf(stderr, "task_info(before) failed: %d\n", kr);
+    }
+    assert(kr == KERN_SUCCESS);
 #else
     struct rusage before, after;
     getrusage(RUSAGE_SELF, &before);
@@ -35,7 +39,11 @@ int main(void) {
     unsigned long elapsed = z_time_elapsed_ms(&start);
 #if defined(__APPLE__)
     info_count = TASK_EVENTS_INFO_COUNT;
-    task_info(mach_task_self(), TASK_EVENTS_INFO, (task_info_t)&after, &info_count);
+    kr = task_info(mach_task_self(), TASK_EVENTS_INFO, (task_info_t)&after, &info_count);
+    if (kr != KERN_SUCCESS) {
+        fprintf(stderr, "task_info(after) failed: %d\n", kr);
+    }
+    assert(kr == KERN_SUCCESS);
     long wakeups = after.csw - before.csw;
     printf("elapsed=%lums context_switches(mach)=%ld\n", elapsed, wakeups);
 #else
