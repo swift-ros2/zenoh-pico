@@ -75,10 +75,13 @@ void *_zp_unicast_lease_task(void *ztu_arg) {
     _z_transport_unicast_t *ztu = (_z_transport_unicast_t *)ztu_arg;
     ztu->_common._transmitted = false;
 
-    int next_lease = (int)ztu->_common._lease;
+    z_whatami_t mode = _z_transport_common_get_session(&ztu->_common)->_mode;
+    // In client mode, expire the peer on its own lease (it paces its KEEP_ALIVEs
+    // on that), but send ours on the lowest of both leases so the peer never
+    // expires us.
+    int next_lease = (mode == Z_WHATAMI_CLIENT) ? (int)ztu->_peer_lease : (int)ztu->_common._lease;
     int next_keep_alive = (int)(ztu->_common._lease / Z_TRANSPORT_LEASE_EXPIRE_FACTOR);
 
-    z_whatami_t mode = _z_transport_common_get_session(&ztu->_common)->_mode;
     _z_transport_peer_unicast_t *curr_peer = NULL;
     if (mode == Z_WHATAMI_CLIENT) {
         curr_peer = _z_transport_peer_unicast_slist_value(ztu->_peers);
@@ -94,11 +97,11 @@ void *_zp_unicast_lease_task(void *ztu_arg) {
                     curr_peer->common._received = false;
                 } else {
                     // THIS LOG STRING USED IN TEST, change with caution
-                    _Z_INFO("Closing session because it has expired after %zums", ztu->_common._lease);
+                    _Z_INFO("Closing session because it has expired after %zums", ztu->_peer_lease);
                     _zp_unicast_failed(ztu);
                     return 0;
                 }
-                next_lease = (int)ztu->_common._lease;
+                next_lease = (int)ztu->_peer_lease;
             }
             // Next keep alive process
             if (next_keep_alive <= 0) {

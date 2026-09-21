@@ -160,6 +160,11 @@ typedef struct {
     _z_transport_common_t _common;
     // Known valid peers
     _z_transport_peer_unicast_slist_t *_peers;
+    // Lease advertised by the peer: it paces its own KEEP_ALIVEs on it, so in
+    // client mode the peer is considered gone only after this long without
+    // receiving anything. _common._lease (the lowest of both leases) paces our
+    // KEEP_ALIVEs.
+    _z_zint_t _peer_lease;
 } _z_transport_unicast_t;
 
 typedef struct _z_transport_multicast_t {
@@ -186,6 +191,7 @@ typedef struct {
     _z_zint_t _initial_sn_rx;
     _z_zint_t _initial_sn_tx;
     _z_zint_t _lease;
+    _z_zint_t _peer_lease;
     z_whatami_t _remote_whatami;
     uint8_t _key_id_res;
     uint8_t _req_id_res;
