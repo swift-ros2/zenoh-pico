@@ -220,13 +220,20 @@ z_result_t z_sleep_us(size_t time) { _Z_CHECK_SYS_ERR(usleep((unsigned int)time)
 z_result_t z_sleep_ms(size_t time) {
     z_time_t start = z_time_now();
 
-    // Most sleep APIs promise to sleep at least whatever you asked them to.
-    // This may compound, so this approach may make sleeps longer than expected.
-    // This extra check tries to minimize the amount of extra time it might sleep.
-    while (z_time_elapsed_ms(&start) < time) {
-        z_result_t ret = z_sleep_us(1000);
-        if (ret != _Z_RES_OK) {
-            return ret;
+    // Sleep once for the whole interval and top up only if the OS returned
+    // early (EINTR). The previous 1 ms usleep() loop produced ~800 wakeups/s
+    // for the lifetime of the lease task; iOS throttles that, which delays
+    // KEEP_ALIVE past the session lease. nanosleep() also avoids usleep()'s
+    // EINVAL for arguments >= 1,000,000 us.
+    unsigned long elapsed = 0;
+    while ((elapsed = z_time_elapsed_ms(&start)) < time) {
+        size_t remaining = time - (size_t)elapsed;
+        struct timespec req;
+        req.tv_sec = (time_t)(remaining / 1000);
+        req.tv_nsec = (long)((remaining % 1000) * 1000000L);
+        if (nanosleep(&req, NULL) != 0 && errno != EINTR) {
+            _z_report_system_error(errno);
+            return _Z_ERR_SYSTEM_GENERIC;
         }
     }
 
