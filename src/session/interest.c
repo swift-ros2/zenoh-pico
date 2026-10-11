@@ -398,6 +398,12 @@ z_result_t _z_interest_process_declares(_z_session_t *zn, const _z_n_msg_declare
     // Retrieve interests
     _z_session_interest_rc_slist_t *intrs =
         __unsafe_z_get_interest_by_key_and_flags(zn, flags, &key, decl->_interest_id);
+    // Some routers tag a future declaration with an unrelated interest id (e.g. the session's latest one). Restricting
+    // to that interest would drop the declaration and leave the write filters of the matching publishers closed for
+    // good, so when the tagged interest does not match, fall back to matching by key.
+    if (intrs == NULL && decl->_interest_id.has_value && decl->_interest_id.value != 0) {
+        intrs = __unsafe_z_get_interest_by_key_and_flags(zn, flags, &key, _z_optional_id_make_none());
+    }
     _z_session_mutex_unlock(zn);
     // update interests with new value
     _z_session_interest_rc_slist_t *xs = intrs;
