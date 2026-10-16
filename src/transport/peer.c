@@ -67,6 +67,12 @@ bool _z_transport_peer_multicast_eq(const _z_transport_peer_multicast_t *left,
 }
 
 void _z_transport_peer_unicast_clear(_z_transport_peer_unicast_t *src) {
+#if Z_FEATURE_FRAGMENTATION == 1
+    for (size_t i = 0; i < Z_PRIORITIES_NUM; i++) {
+        _z_wbuf_clear(&src->_dbuf_qos_reliable[i]);
+        _z_wbuf_clear(&src->_dbuf_qos_best_effort[i]);
+    }
+#endif
     _z_zbuf_clear(&src->flow_buff);
     if (src->_owns_socket) {
         _z_socket_close(&src->_socket);
@@ -77,6 +83,17 @@ void _z_transport_peer_unicast_clear(_z_transport_peer_unicast_t *src) {
 void _z_transport_peer_unicast_copy(_z_transport_peer_unicast_t *dst, const _z_transport_peer_unicast_t *src) {
     dst->_sn_rx_reliable = src->_sn_rx_reliable;
     dst->_sn_rx_best_effort = src->_sn_rx_best_effort;
+    dst->_is_qos = src->_is_qos;
+    for (size_t i = 0; i < Z_PRIORITIES_NUM; i++) {
+        dst->_sn_rx_qos_reliable[i] = src->_sn_rx_qos_reliable[i];
+        dst->_sn_rx_qos_best_effort[i] = src->_sn_rx_qos_best_effort[i];
+#if Z_FEATURE_FRAGMENTATION == 1
+        dst->_state_qos_reliable[i] = src->_state_qos_reliable[i];
+        dst->_state_qos_best_effort[i] = src->_state_qos_best_effort[i];
+        _z_wbuf_copy(&dst->_dbuf_qos_reliable[i], &src->_dbuf_qos_reliable[i]);
+        _z_wbuf_copy(&dst->_dbuf_qos_best_effort[i], &src->_dbuf_qos_best_effort[i]);
+#endif
+    }
     dst->_socket = src->_socket;
     dst->_owns_socket = false;  // Ownership is not copied
     _z_transport_peer_common_copy(&dst->common, &src->common);
@@ -111,6 +128,18 @@ z_result_t _z_transport_peer_unicast_add(_z_transport_unicast_t *ztu, _z_transpo
     _z_zint_t initial_sn_rx = _z_sn_decrement(ztu->_common._sn_res, param->_initial_sn_rx);
     peer->_sn_rx_reliable = initial_sn_rx;
     peer->_sn_rx_best_effort = initial_sn_rx;
+    // With QoS every priority starts from the same initial SN.
+    peer->_is_qos = param->_is_qos;
+    for (size_t i = 0; i < Z_PRIORITIES_NUM; i++) {
+        peer->_sn_rx_qos_reliable[i] = initial_sn_rx;
+        peer->_sn_rx_qos_best_effort[i] = initial_sn_rx;
+#if Z_FEATURE_FRAGMENTATION == 1
+        peer->_state_qos_reliable[i] = _Z_DBUF_STATE_NULL;
+        peer->_state_qos_best_effort[i] = _Z_DBUF_STATE_NULL;
+        peer->_dbuf_qos_reliable[i] = _z_wbuf_null();
+        peer->_dbuf_qos_best_effort[i] = _z_wbuf_null();
+#endif
+    }
 
     peer->common._remote_zid = param->_remote_zid;
     peer->common._remote_whatami = param->_remote_whatami;
