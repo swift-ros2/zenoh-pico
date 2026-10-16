@@ -143,6 +143,10 @@ _z_transport_message_t _z_t_msg_make_init_syn(z_whatami_t whatami, _z_id_t zid) 
     msg._body._init._req_id_res = Z_REQ_RESOLUTION;
     msg._body._init._batch_size = Z_BATCH_UNICAST_SIZE;
     _z_slice_reset(&msg._body._init._cookie);
+    // Announce QoS so that a router keeps one transmission queue per priority for this session. Without it, zenohd
+    // (1.x) marks the single queue congested under Priority::Data but clears the flag under Priority::Control, so
+    // after one dropped message every later droppable message to this session is discarded.
+    msg._body._init._qos = true;
 #if Z_FEATURE_FRAGMENTATION == 1
     msg._body._init._patch = _Z_CURRENT_PATCH;
 #endif
@@ -153,6 +157,9 @@ _z_transport_message_t _z_t_msg_make_init_syn(z_whatami_t whatami, _z_id_t zid) 
         _Z_SET_FLAG(msg._header, _Z_FLAG_T_INIT_S);
     }
 
+    if (msg._body._init._qos) {
+        _Z_SET_FLAG(msg._header, _Z_FLAG_T_Z);
+    }
 #if Z_FEATURE_FRAGMENTATION == 1
     if (msg._body._init._patch != _Z_NO_PATCH) {
         _Z_SET_FLAG(msg._header, _Z_FLAG_T_Z);
@@ -174,6 +181,7 @@ _z_transport_message_t _z_t_msg_make_init_ack(z_whatami_t whatami, _z_id_t zid, 
     msg._body._init._req_id_res = Z_REQ_RESOLUTION;
     msg._body._init._batch_size = Z_BATCH_UNICAST_SIZE;
     msg._body._init._cookie = cookie;
+    msg._body._init._qos = false;  // Set by the listener when the InitSyn announced QoS
 #if Z_FEATURE_FRAGMENTATION == 1
     msg._body._init._patch = _Z_CURRENT_PATCH;
 #endif
@@ -254,6 +262,7 @@ _z_transport_message_t _z_t_msg_make_frame(_z_zint_t sn, _z_zbuf_t *payload, z_r
         _Z_SET_FLAG(msg._header, _Z_FLAG_T_FRAME_R);
     }
     msg._body._frame._payload = payload;
+    msg._body._frame._priority = _Z_TRANSPORT_PRIORITY_DEFAULT;
     return msg;
 }
 
@@ -267,6 +276,7 @@ _z_transport_message_t _z_t_msg_make_frame_header(_z_zint_t sn, z_reliability_t 
         _Z_SET_FLAG(msg._header, _Z_FLAG_T_FRAME_R);
     }
     msg._body._frame._payload = NULL;
+    msg._body._frame._priority = _Z_TRANSPORT_PRIORITY_DEFAULT;
     return msg;
 }
 
@@ -293,6 +303,7 @@ _z_transport_message_t _z_t_msg_make_fragment(_z_zint_t sn, _z_slice_t payload, 
     }
     msg._body._fragment.first = first;
     msg._body._fragment.drop = drop;
+    msg._body._fragment._priority = _Z_TRANSPORT_PRIORITY_DEFAULT;
 
     return msg;
 }
@@ -302,6 +313,7 @@ void _z_t_msg_copy_fragment(_z_t_msg_fragment_t *clone, _z_t_msg_fragment_t *msg
     _z_slice_copy(&clone->_payload, &msg->_payload);
     clone->first = msg->first;
     clone->drop = msg->drop;
+    clone->_priority = msg->_priority;
 }
 
 void _z_t_msg_copy_join(_z_t_msg_join_t *clone, _z_t_msg_join_t *msg) {
@@ -328,6 +340,7 @@ void _z_t_msg_copy_init(_z_t_msg_init_t *clone, _z_t_msg_init_t *msg) {
     if (!_z_slice_is_empty(&msg->_cookie)) {
         _z_slice_copy(&clone->_cookie, &msg->_cookie);
     }
+    clone->_qos = msg->_qos;
 #if Z_FEATURE_FRAGMENTATION == 1
     clone->_patch = msg->_patch;
 #endif
@@ -350,6 +363,7 @@ void _z_t_msg_copy_keep_alive(_z_t_msg_keep_alive_t *clone, _z_t_msg_keep_alive_
 
 void _z_t_msg_copy_frame(_z_t_msg_frame_t *clone, _z_t_msg_frame_t *msg) {
     clone->_sn = msg->_sn;
+    clone->_priority = msg->_priority;
     if ((msg->_payload != NULL) && (clone->_payload != NULL)) {
         _z_zbuf_copy(clone->_payload, msg->_payload);
     }

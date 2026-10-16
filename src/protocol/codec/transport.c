@@ -203,6 +203,20 @@ z_result_t _z_init_encode(_z_wbuf_t *wbf, uint8_t header, const _z_t_msg_init_t 
         _Z_RETURN_IF_ERR(_z_slice_encode(wbf, &msg->_cookie))
     }
 
+    if (msg->_qos) {
+        if (_Z_HAS_FLAG(header, _Z_FLAG_T_Z)) {
+#if Z_FEATURE_FRAGMENTATION == 1
+            bool has_more = msg->_patch != _Z_NO_PATCH;
+#else
+            bool has_more = false;
+#endif
+            _Z_RETURN_IF_ERR(_z_uint8_encode(wbf, _Z_MSG_EXT_ID_INIT_QOS | _Z_MSG_EXT_MORE(has_more)));
+        } else {
+            _Z_DEBUG("Attempted to serialize QoS extension, but the header extension flag was unset");
+            ret |= _Z_ERR_MESSAGE_SERIALIZATION_FAILED;
+        }
+    }
+
 #if Z_FEATURE_FRAGMENTATION == 1
     if (msg->_patch != _Z_NO_PATCH) {
         if (_Z_HAS_FLAG(header, _Z_FLAG_T_Z)) {
@@ -221,7 +235,13 @@ z_result_t _z_init_encode(_z_wbuf_t *wbf, uint8_t header, const _z_t_msg_init_t 
 z_result_t _z_init_decode_ext(_z_msg_ext_t *extension, void *ctx) {
     _ZP_UNUSED(ctx);
     z_result_t ret = _Z_RES_OK;
-    if (false) {
+    if (_Z_EXT_FULL_ID(extension->_header) == _Z_MSG_EXT_ID_INIT_QOS) {
+        _z_t_msg_init_t *msg = (_z_t_msg_init_t *)ctx;
+        msg->_qos = true;
+    } else if (_Z_EXT_FULL_ID(extension->_header) == _Z_MSG_EXT_ID_INIT_QOS_LINK) {
+        // QoS restricted to a priority range and/or a reliability: the low 3 bits are non-zero when QoS is on.
+        _z_t_msg_init_t *msg = (_z_t_msg_init_t *)ctx;
+        msg->_qos = (extension->_body._zint._val & 0x07) != 0;
 #if Z_FEATURE_FRAGMENTATION == 1
     } else if (_Z_EXT_FULL_ID(extension->_header) == _Z_MSG_EXT_ID_INIT_PATCH) {
         _z_t_msg_init_t *msg = (_z_t_msg_init_t *)ctx;
@@ -274,6 +294,7 @@ z_result_t _z_init_decode(_z_t_msg_init_t *msg, _z_zbuf_t *zbf, uint8_t header) 
     } else {
         msg->_cookie = _z_slice_null();
     }
+    msg->_qos = false;
 #if Z_FEATURE_FRAGMENTATION == 1
     msg->_patch = _Z_NO_PATCH;
 #endif
@@ -394,11 +415,25 @@ z_result_t _z_frame_encode(_z_wbuf_t *wbf, uint8_t header, const _z_t_msg_frame_
     return _Z_RES_OK;
 }
 
+static z_result_t _z_frame_decode_ext(_z_msg_ext_t *extension, void *ctx) {
+    _z_t_msg_frame_t *msg = (_z_t_msg_frame_t *)ctx;
+    if (_Z_EXT_FULL_ID(extension->_header) == _Z_MSG_EXT_ID_FRAME_QOS) {
+        msg->_priority = (uint8_t)(extension->_body._zint._val & _Z_TRANSPORT_PRIORITY_MASK);
+        return _Z_RES_OK;
+    }
+    if (_Z_MSG_EXT_IS_MANDATORY(extension->_header)) {
+        _Z_ERROR("Unknown mandatory extension in FRAME (extension_id: %02x)", _Z_EXT_ID(extension->_header));
+        _Z_ERROR_RETURN(_Z_ERR_MESSAGE_EXTENSION_MANDATORY_AND_UNKNOWN);
+    }
+    return _Z_RES_OK;
+}
+
 z_result_t _z_frame_decode(_z_t_msg_frame_t *msg, _z_zbuf_t *zbf, uint8_t header) {
     *msg = (_z_t_msg_frame_t){0};
+    msg->_priority = _Z_TRANSPORT_PRIORITY_DEFAULT;
     _Z_RETURN_IF_ERR(_z_zsize_decode(&msg->_sn, zbf));
     if (_Z_HAS_FLAG(header, _Z_FLAG_T_Z)) {
-        _Z_RETURN_IF_ERR(_z_msg_ext_skip_non_mandatories(zbf, 0x04));
+        _Z_RETURN_IF_ERR(_z_msg_ext_decode_iter(zbf, _z_frame_decode_ext, msg));
     }
     // Note payload
     msg->_payload = zbf;
@@ -440,6 +475,8 @@ z_result_t _z_fragment_decode_ext(_z_msg_ext_t *extension, void *ctx) {
         msg->first = true;
     } else if (_Z_EXT_FULL_ID(extension->_header) == _Z_MSG_EXT_ID_FRAGMENT_DROP) {
         msg->drop = true;
+    } else if (_Z_EXT_FULL_ID(extension->_header) == _Z_MSG_EXT_ID_FRAGMENT_QOS) {
+        msg->_priority = (uint8_t)(extension->_body._zint._val & _Z_TRANSPORT_PRIORITY_MASK);
     } else if (_Z_MSG_EXT_IS_MANDATORY(extension->_header)) {
         _Z_ERROR_LOG(_Z_ERR_MESSAGE_EXTENSION_MANDATORY_AND_UNKNOWN);
         ret = _Z_ERR_MESSAGE_EXTENSION_MANDATORY_AND_UNKNOWN;
@@ -456,6 +493,7 @@ z_result_t _z_fragment_decode(_z_t_msg_fragment_t *msg, _z_zbuf_t *zbf, uint8_t 
 
     msg->first = false;
     msg->drop = false;
+    msg->_priority = _Z_TRANSPORT_PRIORITY_DEFAULT;
     if ((ret == _Z_RES_OK) && (_Z_HAS_FLAG(header, _Z_FLAG_T_Z) == true)) {
         ret |= _z_msg_ext_decode_iter(zbf, _z_fragment_decode_ext, msg);
     }

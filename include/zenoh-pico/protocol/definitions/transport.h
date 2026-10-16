@@ -101,6 +101,10 @@ extern "C" {
 #define _Z_CURRENT_PATCH 0x01
 #define _Z_PATCH_HAS_FRAGMENT_MARKERS(patch) (patch >= 1)
 
+// The priority a Frame or Fragment belongs to when it carries no QoS extension (Priority::Data).
+#define _Z_TRANSPORT_PRIORITY_DEFAULT 5
+#define _Z_TRANSPORT_PRIORITY_MASK 0x07
+
 /*=============================*/
 /*     Transport Messages      */
 /*=============================*/
@@ -328,6 +332,8 @@ typedef struct {
     uint8_t _req_id_res;
     uint8_t _seq_num_res;
     uint8_t _version;
+    // QoS extension: the sender keeps a separate SN space (and channel) per priority.
+    bool _qos;
 #if Z_FEATURE_FRAGMENTATION == 1
     uint8_t _patch;
 #endif
@@ -466,6 +472,8 @@ void _z_t_msg_keep_alive_clear(_z_t_msg_keep_alive_t *msg);
 typedef struct {
     _z_zbuf_t *_payload;
     _z_zint_t _sn;
+    // Priority carried by the QoS extension (decode only). _Z_TRANSPORT_PRIORITY_DEFAULT when absent.
+    uint8_t _priority;
 } _z_t_msg_frame_t;
 void _z_t_msg_frame_clear(_z_t_msg_frame_t *msg);
 
@@ -496,6 +504,8 @@ typedef struct {
     _z_zint_t _sn;
     bool first;
     bool drop;
+    // Priority carried by the QoS extension (decode only). _Z_TRANSPORT_PRIORITY_DEFAULT when absent.
+    uint8_t _priority;
 } _z_t_msg_fragment_t;
 void _z_t_msg_fragment_clear(_z_t_msg_fragment_t *msg);
 
