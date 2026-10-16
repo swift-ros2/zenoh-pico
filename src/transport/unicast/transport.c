@@ -108,6 +108,7 @@ static z_result_t _z_unicast_handshake_open(_z_transport_unicast_establish_param
     param->_seq_num_res = ism._body._init._seq_num_res;  // The announced sn resolution
     param->_req_id_res = ism._body._init._req_id_res;    // The announced req id resolution
     param->_batch_size = ism._body._init._batch_size;    // The announced batch size
+    bool qos_announced = ism._body._init._qos;
 
     // Encode and send the message
     _Z_DEBUG("Sending Z_INIT(Syn)");
@@ -124,6 +125,8 @@ static z_result_t _z_unicast_handshake_open(_z_transport_unicast_establish_param
         _Z_ERROR_RETURN(_Z_ERR_MESSAGE_UNEXPECTED);
     }
     param->_remote_whatami = iam._body._init._whatami;
+    // QoS is on only when both sides announced it.
+    param->_is_qos = qos_announced && iam._body._init._qos;
     _Z_DEBUG("Received Z_INIT(Ack)");
     // Any of the size parameters in the InitAck must be less or equal than the one in the InitSyn,
     // otherwise the InitAck message is considered invalid and it should be treated as a
@@ -246,6 +249,12 @@ z_result_t _z_unicast_handshake_listen(_z_transport_unicast_establish_param_t *p
         iam._body._init._patch = tmsg._body._init._patch;
     }
 #endif
+    // Accept QoS when the opener announced it.
+    if (tmsg._body._init._qos) {
+        iam._body._init._qos = true;
+        _Z_SET_FLAG(iam._header, _Z_FLAG_T_Z);
+    }
+    param->_is_qos = iam._body._init._qos;
     param->_seq_num_res = iam._body._init._seq_num_res;
     param->_req_id_res = iam._body._init._req_id_res;
     param->_batch_size = iam._body._init._batch_size;

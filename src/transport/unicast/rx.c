@@ -90,38 +90,52 @@ z_result_t _z_unicast_recv_t_msg(_z_transport_unicast_t *ztu, _z_transport_messa
     return ret;
 }
 
+// The receive state of one channel: a priority (when QoS was negotiated) and a reliability.
+typedef struct {
+    _z_zint_t *sn;
+#if Z_FEATURE_FRAGMENTATION == 1
+    _z_wbuf_t *dbuf;
+    uint8_t *dbuf_state;
+#endif
+} _z_unicast_rx_channel_t;
+
+static _z_unicast_rx_channel_t _z_unicast_rx_channel(_z_transport_peer_unicast_t *peer, uint8_t priority,
+                                                     bool reliable) {
+    _z_unicast_rx_channel_t ch;
+    if (!peer->_is_qos || priority == _Z_TRANSPORT_PRIORITY_DEFAULT || priority >= Z_PRIORITIES_NUM) {
+        ch.sn = reliable ? &peer->_sn_rx_reliable : &peer->_sn_rx_best_effort;
+#if Z_FEATURE_FRAGMENTATION == 1
+        ch.dbuf = reliable ? &peer->common._dbuf_reliable : &peer->common._dbuf_best_effort;
+        ch.dbuf_state = reliable ? &peer->common._state_reliable : &peer->common._state_best_effort;
+#endif
+    } else {
+        ch.sn = reliable ? &peer->_sn_rx_qos_reliable[priority] : &peer->_sn_rx_qos_best_effort[priority];
+#if Z_FEATURE_FRAGMENTATION == 1
+        ch.dbuf = reliable ? &peer->_dbuf_qos_reliable[priority] : &peer->_dbuf_qos_best_effort[priority];
+        ch.dbuf_state = reliable ? &peer->_state_qos_reliable[priority] : &peer->_state_qos_best_effort[priority];
+#endif
+    }
+    return ch;
+}
+
 static z_result_t _z_unicast_handle_frame(_z_transport_unicast_t *ztu, uint8_t header, _z_t_msg_frame_t *msg,
                                           _z_transport_peer_unicast_t *peer) {
-    z_reliability_t tmsg_reliability;
+    bool reliable = _Z_HAS_FLAG(header, _Z_FLAG_T_FRAME_R);
+    z_reliability_t tmsg_reliability = reliable ? Z_RELIABILITY_RELIABLE : Z_RELIABILITY_BEST_EFFORT;
+    _z_unicast_rx_channel_t ch = _z_unicast_rx_channel(peer, msg->_priority, reliable);
     // Check if the SN is correct
-    if (_Z_HAS_FLAG(header, _Z_FLAG_T_FRAME_R)) {
-        tmsg_reliability = Z_RELIABILITY_RELIABLE;
-        // @TODO: amend once reliability is in place. For the time being only
-        //        monotonic SNs are ensured
-        if (_z_sn_precedes(ztu->_common._sn_res, peer->_sn_rx_reliable, msg->_sn)) {
-            peer->_sn_rx_reliable = msg->_sn;
-        } else {
-#if Z_FEATURE_FRAGMENTATION == 1
-            _z_wbuf_clear(&peer->common._dbuf_reliable);
-            peer->common._state_reliable = _Z_DBUF_STATE_NULL;
-#endif
-            _Z_INFO("Reliable message dropped because it is out of order");
-            _z_t_msg_frame_clear(msg);
-            return _Z_RES_OK;
-        }
+    // @TODO: amend once reliability is in place. For the time being only
+    //        monotonic SNs are ensured
+    if (_z_sn_precedes(ztu->_common._sn_res, *ch.sn, msg->_sn)) {
+        *ch.sn = msg->_sn;
     } else {
-        tmsg_reliability = Z_RELIABILITY_BEST_EFFORT;
-        if (_z_sn_precedes(ztu->_common._sn_res, peer->_sn_rx_best_effort, msg->_sn)) {
-            peer->_sn_rx_best_effort = msg->_sn;
-        } else {
 #if Z_FEATURE_FRAGMENTATION == 1
-            _z_wbuf_clear(&peer->common._dbuf_best_effort);
-            peer->common._state_best_effort = _Z_DBUF_STATE_NULL;
+        _z_wbuf_clear(ch.dbuf);
+        *ch.dbuf_state = _Z_DBUF_STATE_NULL;
 #endif
-            _Z_INFO("Best effort message dropped because it is out of order");
-            _z_t_msg_frame_clear(msg);
-            return _Z_RES_OK;
-        }
+        _Z_INFO("%s message dropped because it is out of order", reliable ? "Reliable" : "Best effort");
+        _z_t_msg_frame_clear(msg);
+        return _Z_RES_OK;
     }
     // Handle all the zenoh message, one by one
     // From this point, memory cleaning must be handled by the network message layer
@@ -139,54 +153,44 @@ static z_result_t _z_unicast_handle_fragment_inner(_z_transport_unicast_t *ztu, 
                                                    _z_t_msg_fragment_t *msg, _z_transport_peer_unicast_t *peer) {
     z_result_t ret = _Z_RES_OK;
 #if Z_FEATURE_FRAGMENTATION == 1
-    _z_wbuf_t *dbuf;
-    uint8_t *dbuf_state;
-    z_reliability_t tmsg_reliability;
-    bool consecutive;
-
+    bool reliable = _Z_HAS_FLAG(header, _Z_FLAG_T_FRAGMENT_R);
+    z_reliability_t tmsg_reliability = reliable ? Z_RELIABILITY_RELIABLE : Z_RELIABILITY_BEST_EFFORT;
     // Select the right defragmentation buffer
-    if (_Z_HAS_FLAG(header, _Z_FLAG_T_FRAGMENT_R)) {
-        tmsg_reliability = Z_RELIABILITY_RELIABLE;
-        // Check SN
-        // @TODO: amend once reliability is in place. For the time being only
-        //        monotonic SNs are ensured
-        if (_z_sn_precedes(ztu->_common._sn_res, peer->_sn_rx_reliable, msg->_sn)) {
-            consecutive = _z_sn_consecutive(ztu->_common._sn_res, peer->_sn_rx_reliable, msg->_sn);
-            peer->_sn_rx_reliable = msg->_sn;
-            dbuf = &peer->common._dbuf_reliable;
-            dbuf_state = &peer->common._state_reliable;
-        } else {
-            _z_wbuf_clear(&peer->common._dbuf_reliable);
-            peer->common._state_reliable = _Z_DBUF_STATE_NULL;
-            _Z_INFO("Reliable message dropped because it is out of order");
-            return _Z_RES_OK;
-        }
+    _z_unicast_rx_channel_t ch = _z_unicast_rx_channel(peer, msg->_priority, reliable);
+    _z_wbuf_t *dbuf = ch.dbuf;
+    uint8_t *dbuf_state = ch.dbuf_state;
+    bool consecutive;
+    // Check SN
+    // @TODO: amend once reliability is in place. For the time being only
+    //        monotonic SNs are ensured
+    if (_z_sn_precedes(ztu->_common._sn_res, *ch.sn, msg->_sn)) {
+        consecutive = _z_sn_consecutive(ztu->_common._sn_res, *ch.sn, msg->_sn);
+        *ch.sn = msg->_sn;
     } else {
-        tmsg_reliability = Z_RELIABILITY_BEST_EFFORT;
-        // Check SN
-        if (_z_sn_precedes(ztu->_common._sn_res, peer->_sn_rx_best_effort, msg->_sn)) {
-            consecutive = _z_sn_consecutive(ztu->_common._sn_res, peer->_sn_rx_best_effort, msg->_sn);
-            peer->_sn_rx_best_effort = msg->_sn;
-            dbuf = &peer->common._dbuf_best_effort;
-            dbuf_state = &peer->common._state_best_effort;
-        } else {
-            _z_wbuf_clear(&peer->common._dbuf_best_effort);
-            peer->common._state_best_effort = _Z_DBUF_STATE_NULL;
-            _Z_INFO("Best effort message dropped because it is out of order");
-            return _Z_RES_OK;
-        }
+        _z_wbuf_clear(dbuf);
+        *dbuf_state = _Z_DBUF_STATE_NULL;
+        _Z_INFO("%s message dropped because it is out of order", reliable ? "Reliable" : "Best effort");
+        return _Z_RES_OK;
     }
+    bool has_markers = _Z_PATCH_HAS_FRAGMENT_MARKERS(peer->common._patch);
     // Check consecutive SN
     if (!consecutive && _z_wbuf_len(dbuf) > 0) {
         _z_wbuf_clear(dbuf);
         *dbuf_state = _Z_DBUF_STATE_NULL;
         _Z_INFO("Defragmentation buffer dropped because non-consecutive fragments received");
-        return _Z_RES_OK;
+        // The gap only loses the message being reassembled: a fragment that starts a new message is kept.
+        if (!(has_markers && msg->first)) {
+            return _Z_RES_OK;
+        }
     }
     // Handle fragment markers
-    if (_Z_PATCH_HAS_FRAGMENT_MARKERS(peer->common._patch)) {
+    if (has_markers) {
         if (msg->first) {
             _z_wbuf_reset(dbuf);
+            // A new message starts: forget that the previous one overflowed.
+            if (*dbuf_state == _Z_DBUF_STATE_OVERFLOW) {
+                *dbuf_state = _Z_DBUF_STATE_INIT;
+            }
         } else if (_z_wbuf_len(dbuf) == 0) {
             _Z_INFO("First fragment received without the start marker");
             return _Z_RES_OK;

@@ -102,6 +102,18 @@ typedef struct {
     // SN numbers
     _z_zint_t _sn_rx_reliable;
     _z_zint_t _sn_rx_best_effort;
+    // QoS was negotiated: the remote sends each priority with its own SN space. The fields above (and the common
+    // defragmentation buffers) serve the default priority and non-QoS transports; these arrays, indexed by
+    // priority, serve the other priorities.
+    bool _is_qos;
+    _z_zint_t _sn_rx_qos_reliable[Z_PRIORITIES_NUM];
+    _z_zint_t _sn_rx_qos_best_effort[Z_PRIORITIES_NUM];
+#if Z_FEATURE_FRAGMENTATION == 1
+    uint8_t _state_qos_reliable[Z_PRIORITIES_NUM];
+    uint8_t _state_qos_best_effort[Z_PRIORITIES_NUM];
+    _z_wbuf_t _dbuf_qos_reliable[Z_PRIORITIES_NUM];
+    _z_wbuf_t _dbuf_qos_best_effort[Z_PRIORITIES_NUM];
+#endif
     bool _pending;
     uint8_t flow_state;
     uint16_t flow_curr_size;

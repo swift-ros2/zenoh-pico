@@ -20,7 +20,7 @@
 #else
 
 /*--- CMake generated config; pass values to CMake to change the following tokens ---*/
-#define Z_FRAG_MAX_SIZE 4096
+#define Z_FRAG_MAX_SIZE 67108864
 #define Z_BATCH_UNICAST_SIZE 2048
 #define Z_BATCH_MULTICAST_SIZE 2048
 #define Z_CONFIG_SOCKET_TIMEOUT 100
