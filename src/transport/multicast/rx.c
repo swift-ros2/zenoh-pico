@@ -165,6 +165,13 @@ static z_result_t _z_multicast_handle_frame(_z_transport_multicast_t *ztm, uint8
     _z_network_message_t curr_nmsg = {0};
     _z_arc_slice_t arcs = _z_arc_slice_empty();
     while (_z_zbuf_len(msg->_payload) > 0) {
+        // The payload is the rest of the batch: a batch can hold more than one transport message, e.g. a router
+        // starts a new frame when the reliability changes. Stop at the next transport message header and leave it to
+        // the batch loop, as Zenoh does.
+        uint8_t next_mid = _Z_MID(_z_zbuf_get(msg->_payload, _z_zbuf_get_rpos(msg->_payload)));
+        if (next_mid < _Z_MID_N_INTEREST || next_mid > _Z_MID_N_OAM) {
+            break;
+        }
         _Z_RETURN_IF_ERR(_z_network_message_decode(&curr_nmsg, msg->_payload, &arcs, (uintptr_t)&entry->common));
         curr_nmsg._reliability = tmsg_reliability;
         _Z_RETURN_IF_ERR(_z_handle_network_message(&ztm->_common, &curr_nmsg, &entry->common));
