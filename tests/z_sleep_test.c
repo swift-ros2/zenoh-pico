@@ -8,6 +8,9 @@
 // __APPLE__ this counts via Mach task_info(TASK_EVENTS_INFO)'s csw field
 // instead, which does discriminate a many-wakeups sleep loop from a single
 // sleep.
+
+// The checks below are plain asserts: keep them in a release build, which defines NDEBUG.
+#undef NDEBUG
 #include <assert.h>
 #include <stdio.h>
 
