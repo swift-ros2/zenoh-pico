@@ -206,12 +206,28 @@ static bool _z_n_msg_names_own_keyexpr(const _z_zenoh_message_t *msg, const _z_t
     return (peer != NULL) && (key != NULL) && (key->_id != Z_RESOURCE_ID_NONE) && _z_wireexpr_is_local(key);
 }
 
+// True when a peer undeclares a subscriber, a queryable or a token.
+static bool _z_n_msg_is_undeclaration(const _z_zenoh_message_t *msg, const _z_transport_peer_common_t *peer) {
+    if ((peer == NULL) || (msg->_tag != _Z_N_DECLARE)) {
+        return false;
+    }
+    switch (msg->_body._declare._decl._tag) {
+        case _Z_UNDECL_SUBSCRIBER:
+        case _Z_UNDECL_QUERYABLE:
+        case _Z_UNDECL_TOKEN:
+            return true;
+        default:
+            return false;
+    }
+}
+
 z_result_t _z_handle_network_message(_z_transport_common_t *transport, _z_zenoh_message_t *msg,
                                      _z_transport_peer_common_t *peer) {
     z_result_t ret = _Z_RES_OK;
     _z_session_t *zn = _z_transport_common_get_session(transport);
     // Read now: the handlers consume the message
     bool names_own_keyexpr = _z_n_msg_names_own_keyexpr(msg, peer);
+    bool is_undeclaration = _z_n_msg_is_undeclaration(msg, peer);
     bool is_request = (msg->_tag == _Z_N_REQUEST);
     _z_zint_t request_id = is_request ? msg->_body._request._rid : 0;
 
@@ -266,12 +282,13 @@ z_result_t _z_handle_network_message(_z_transport_common_t *transport, _z_zenoh_
     }
     if ((ret == _Z_ERR_KEYEXPR_UNKNOWN) && names_own_keyexpr) {
         // The message names a key expression that this session declared and has undeclared since, with the last
-        // subscriber or queryable on it. The peer sent the message before it processed the undeclaration, which is
-        // no protocol error: an error here would make the caller close the transport. (An id that this session
-        // never declared cannot be told apart and is dropped the same way.) The handler has released the message;
-        // nothing is left that could take it. A request gets its final so that the other side does not wait for a
-        // reply until its timeout (as for a query that no queryable matches, a final that cannot be sent is not an
-        // error of the received message).
+        // entity that used it. The peer sent the message before it processed the undeclaration, which is no
+        // protocol error: an error here would make the caller close the transport. (An id that this session never
+        // declared cannot be told apart and is dropped the same way.) The handler has released the message, and
+        // the session can no longer tell which key it names, so an entity declared on another key expression that
+        // would have matched it (a wildcard) misses it too. A request gets its final so that the other side does
+        // not wait for a reply until its timeout (as for a query that no queryable matches, a final that cannot be
+        // sent is not an error of the received message).
         _Z_INFO("Dropping a message that names an undeclared key expression of this session");
         ret = _Z_RES_OK;
         if (is_request) {
@@ -280,6 +297,14 @@ z_result_t _z_handle_network_message(_z_transport_common_t *transport, _z_zenoh_
             (void)_z_send_n_msg(zn, &final, Z_RELIABILITY_RELIABLE, Z_CONGESTION_CONTROL_BLOCK, NULL);
             _z_msg_clear(&final);
         }
+    }
+    if (is_undeclaration && ((ret == _Z_ERR_MESSAGE_ZENOH_DECLARATION_UNKNOWN) || (ret == _Z_ERR_ENTITY_UNKNOWN))) {
+        // The peer undeclares an entity that this session has no record of. That is the other half of the case
+        // above: a declaration that named an undeclared key expression was dropped without a record, and a router
+        // sends the undeclaration when the remote entity goes, even after the interest that the declaration
+        // answered is gone. There is nothing to undo, and an error here would make the caller close the transport.
+        _Z_INFO("Dropping the undeclaration of an entity that this session does not know");
+        ret = _Z_RES_OK;
     }
     return ret;
 }

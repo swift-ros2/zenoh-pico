@@ -16,11 +16,14 @@
 //
 // A subscriber or a queryable declares its key as a resource and tells the router the id; from then on the router
 // names the key by that id in what it sends to the session. The resource is undeclared together with the last entity
-// that uses it, and whatever the router sent before it processed the undeclaration still carries the id. Such a
-// message has no receiver left and must be dropped. Reporting it as an error makes the transport treat it as a
-// protocol violation and close, so undeclaring an entity under traffic cost the whole session.
+// that uses it, and whatever the router sent before it processed the undeclaration still carries the id. The session
+// cannot tell any more which key such a message names, so it must be dropped. Reporting it as an error makes the
+// transport treat it as a protocol violation and close, so undeclaring an entity under traffic cost the whole session.
 //
 // An id that the peer never declared in its own mapping stays an error: the peer declares before it uses.
+//
+// A declaration that is dropped this way leaves no record, and the router still sends its undeclaration when the
+// remote entity goes. That undeclaration must be dropped as well.
 //
 // The messages are fed through a task of the session's runtime, as the read task does.
 
@@ -178,8 +181,14 @@ typedef enum {
     FEED_REPLY,
     FEED_DECL_SUBSCRIBER,
     FEED_DECL_QUERYABLE,
-    FEED_DECL_TOKEN
+    FEED_DECL_TOKEN,
+    FEED_UNDECL_SUBSCRIBER,
+    FEED_UNDECL_QUERYABLE,
+    FEED_UNDECL_TOKEN
 } feed_kind_t;
+
+// The id of every remote entity the tests declare and undeclare
+#define REMOTE_ENTITY_ID 1
 
 typedef struct {
     feed_kind_t kind;
@@ -212,16 +221,30 @@ static _z_fut_fn_result_t feed_task(void *arg, _z_executor_t *executor) {
             break;
         }
         case FEED_DECL_SUBSCRIBER: {
-            _z_n_msg_make_declare(&msg, _z_make_decl_subscriber(&feed->key, 1), _z_optional_id_make_none());
+            _z_n_msg_make_declare(&msg, _z_make_decl_subscriber(&feed->key, REMOTE_ENTITY_ID),
+                                  _z_optional_id_make_none());
             break;
         }
         case FEED_DECL_QUERYABLE: {
-            _z_n_msg_make_declare(&msg, _z_make_decl_queryable(&feed->key, 1, true, 0), _z_optional_id_make_none());
+            _z_n_msg_make_declare(&msg, _z_make_decl_queryable(&feed->key, REMOTE_ENTITY_ID, true, 0),
+                                  _z_optional_id_make_none());
             break;
         }
-        case FEED_DECL_TOKEN:
+        case FEED_DECL_TOKEN: {
+            _z_n_msg_make_declare(&msg, _z_make_decl_token(&feed->key, REMOTE_ENTITY_ID), _z_optional_id_make_none());
+            break;
+        }
+        case FEED_UNDECL_SUBSCRIBER: {
+            _z_n_msg_make_declare(&msg, _z_make_undecl_subscriber(REMOTE_ENTITY_ID, NULL), _z_optional_id_make_none());
+            break;
+        }
+        case FEED_UNDECL_QUERYABLE: {
+            _z_n_msg_make_declare(&msg, _z_make_undecl_queryable(REMOTE_ENTITY_ID, NULL), _z_optional_id_make_none());
+            break;
+        }
+        case FEED_UNDECL_TOKEN:
         default: {
-            _z_n_msg_make_declare(&msg, _z_make_decl_token(&feed->key, 1), _z_optional_id_make_none());
+            _z_n_msg_make_declare(&msg, _z_make_undecl_token(REMOTE_ENTITY_ID, NULL), _z_optional_id_make_none());
             break;
         }
     }
@@ -363,10 +386,39 @@ static void test_reply_and_declarations_for_an_undeclared_key_are_dropped(void) 
     cleanup_session();
 }
 
+// A router sends the undeclaration of a remote entity when that entity goes, also when the declaration was dropped
+// because it named an undeclared key, and also after the interest that the declaration answered is gone.
+static void test_undeclaration_of_a_dropped_declaration_is_dropped(void) {
+    setup_session();
+    _z_subscriber_t sub;
+    _z_atomic_size_t calls;
+    declare_subscriber(&sub, &calls);
+    uint16_t id = declared_resource_id();
+    undeclare_subscriber(&sub);
+
+    feed_kind_t declarations[] = {FEED_DECL_SUBSCRIBER, FEED_DECL_QUERYABLE, FEED_DECL_TOKEN};
+    feed_kind_t undeclarations[] = {FEED_UNDECL_SUBSCRIBER, FEED_UNDECL_QUERYABLE, FEED_UNDECL_TOKEN};
+    for (size_t i = 0; i < sizeof(declarations) / sizeof(declarations[0]); i++) {
+        // Dropped without a record
+        ASSERT_OK(feed(declarations[i], key_by_own_id(id), 0));
+        ASSERT_OK(feed(undeclarations[i], _z_wireexpr_null(), 0));
+
+        // A declaration that the session can resolve is recorded and undeclared as before. A second
+        // undeclaration finds no record either.
+        ASSERT_OK(feed(declarations[i], key_by_name(), 0));
+        ASSERT_OK(feed(undeclarations[i], _z_wireexpr_null(), 0));
+        ASSERT_OK(feed(undeclarations[i], _z_wireexpr_null(), 0));
+    }
+    ASSERT_TRUE(count(&calls) == 0);
+
+    cleanup_session();
+}
+
 int main(void) {
     test_sample_for_an_undeclared_key_is_dropped();
     test_query_for_an_undeclared_key_gets_its_final();
     test_reply_and_declarations_for_an_undeclared_key_are_dropped();
+    test_undeclaration_of_a_dropped_declaration_is_dropped();
     return 0;
 }
 
