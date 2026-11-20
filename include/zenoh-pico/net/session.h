@@ -136,7 +136,8 @@ typedef struct _z_session_t {
 
     // Session counters
     uint16_t _resource_id;
-    uint32_t _entity_id;
+    // Taken by every declaration, from any thread and without a lock (see _z_get_entity_id)
+    _z_atomic_size_t _entity_id;
     _z_zint_t _query_id;
     _z_zint_t _interest_id;
     _z_ntp64_t _last_timestamp;

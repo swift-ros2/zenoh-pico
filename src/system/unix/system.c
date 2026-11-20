@@ -230,7 +230,7 @@ z_result_t z_sleep_ms(size_t time) {
     // Sleep once for the whole interval and top up only if the OS returned
     // early (EINTR). The previous 1 ms usleep() loop woke the caller about
     // 800 times a second for as long as it slept, which iOS throttles. Up to
-    // 1.7 the lease task slept this way for its whole life; since 1.10 the
+    // 1.7 the lease task slept this way for its whole life; since 1.9 the
     // session tasks are futures on the executor and no longer sleep here.
     // nanosleep() also avoids usleep()'s EINVAL for arguments >= 1,000,000 us.
     unsigned long elapsed = 0;

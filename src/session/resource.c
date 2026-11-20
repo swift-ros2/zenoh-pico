@@ -53,7 +53,11 @@ void _z_resource_free(_z_resource_t **res) {
 }
 
 /*------------------ Entity ------------------*/
-uint32_t _z_get_entity_id(_z_session_t *zn) { return zn->_entity_id++; }
+// Declarations take their id here without holding a lock, and an application may declare from several threads at
+// once: a plain increment gave two entities the same id, and the router then routed for one of them only.
+uint32_t _z_get_entity_id(_z_session_t *zn) {
+    return (uint32_t)_z_atomic_size_fetch_add(&zn->_entity_id, 1, _z_memory_order_relaxed);
+}
 
 uint16_t _z_get_resource_id(_z_session_t *zn) { return zn->_resource_id++; }
 
