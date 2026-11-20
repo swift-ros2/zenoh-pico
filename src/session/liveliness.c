@@ -44,12 +44,14 @@ z_result_t _z_liveliness_process_remote_token_declare(_z_session_t *zn, uint32_t
 
     const _z_keyexpr_t *pkeyexpr = _z_keyexpr_intmap_get(&zn->_remote_tokens, id);
     if (pkeyexpr != NULL) {
-        // Already received this token
+        // Already received this token id. A different key under the same id is not an error: a router answers a
+        // liveliness query (an interest in the current tokens only) with one declaration per token, all with id 0,
+        // because such a token is never undeclared. Failing here closes the transport, so a query that matches two
+        // tokens would drop the session. The query reply was delivered by the caller; there is nothing to track.
         _Z_DEBUG("Duplicate token id %i", (int)id);
-        ret = _z_keyexpr_equals(pkeyexpr, &ke) ? _Z_RES_OK : _Z_ERR_KEYEXPR_NOT_MATCH;
         _z_session_mutex_unlock(zn);
         _z_keyexpr_clear(&ke);
-        return ret;
+        return _Z_RES_OK;
     } else {
         _z_keyexpr_t *ke_on_heap = (_z_keyexpr_t *)z_malloc(sizeof(_z_keyexpr_t));
         if (ke_on_heap == NULL || _z_keyexpr_intmap_insert(&zn->_remote_tokens, id, ke_on_heap) == NULL) {
