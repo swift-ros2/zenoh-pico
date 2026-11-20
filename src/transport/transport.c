@@ -94,7 +94,9 @@ void _z_transport_clear(_z_transport_t *zt) {
     }
     // The tx mutex, the buffers and the link are destroyed below, and senders do not hold a lock that would keep them
     // out: stop new ones and wait for those that entered before the mark. A sender stays inside for one send at
-    // most, so the wait is bounded by the link's send timeout.
+    // most. That send is bounded only by a send timeout on the socket, which zenoh-pico does not set itself: the
+    // application has to (swift-ros2's bridge sets SO_SNDTIMEO on POSIX), or a peer that stops reading keeps a
+    // blocked sender, and with it this wait, for as long as the kernel keeps the connection.
     _z_transport_common_mark_failed(ztc);
     while (_z_atomic_size_load(&ztc->_tx_users, _z_memory_order_seq_cst) != 0) {
         z_sleep_ms(1);

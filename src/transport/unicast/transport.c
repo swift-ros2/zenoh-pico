@@ -76,16 +76,21 @@ static z_result_t _z_unicast_transport_create_inner(_z_transport_unicast_t *ztu,
 
 z_result_t _z_unicast_transport_create(_z_transport_t *zt, _z_link_t *zl,
                                        _z_transport_unicast_establish_param_t *param) {
-    zt->_type = _Z_TRANSPORT_UNICAST_TYPE;
     _z_transport_unicast_t *ztu = &zt->_transport._unicast;
     memset(ztu, 0, sizeof(_z_transport_unicast_t));
-    // A new transport is not failed and has no sender inside (the previous one, if any, was cleared, which waited for
-    // its senders).
-    _z_atomic_bool_init(&ztu->_common._failed, false);
+    // No sender is inside: the previous transport, if any, was cleared, which waited for its senders. Senders read the
+    // type without a lock, so the gate is set up before the type is, and it stays closed until the mutexes and the
+    // buffers exist: a send that arrives while the transport is built (a reconnection) is turned away.
+    // Not covered: a sender that read the type of the previous transport and did not reach the gate before that
+    // transport was cleared and this one reset the counter.
     _z_atomic_size_init(&ztu->_common._tx_users, 0);
+    _z_atomic_bool_init(&ztu->_common._failed, true);
+    zt->_type = _Z_TRANSPORT_UNICAST_TYPE;
 
     z_result_t ret = _z_unicast_transport_create_inner(ztu, zl, param);
-    if (ret != _Z_RES_OK) {
+    if (ret == _Z_RES_OK) {
+        _z_atomic_bool_store(&ztu->_common._failed, false, _z_memory_order_seq_cst);
+    } else {
         // Clear alloc data
 #if Z_FEATURE_MULTI_THREAD == 1
         _z_mutex_drop(&ztu->_common._mutex_tx);
