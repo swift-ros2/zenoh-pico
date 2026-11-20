@@ -128,6 +128,12 @@ static void setup_session(void) {
     ASSERT_OK(_z_unicast_transport_create(&g_session._tp, link, &param));
     transport_common()->_session = _z_session_rc_clone_as_weak(&g_session_rc);
     transport_common()->_state = _Z_TRANSPORT_STATE_OPEN;
+    // The router. It does not own a socket, so clearing the transport closes nothing.
+    _z_sys_net_socket_t no_socket;
+    memset(&no_socket, 0, sizeof(no_socket));
+    _z_transport_peer_unicast_t *router = NULL;
+    ASSERT_OK(_z_transport_peer_unicast_add(&g_session._tp._transport._unicast, &param, no_socket, false, &router));
+    ASSERT_EQ_U32(_z_transport_get_peers_count(&g_session._tp), 1);
 
     g_writers_inside = 0;
     g_write_count = 0;
@@ -231,8 +237,11 @@ static void test_failure_turns_senders_away_before_the_transport_is_cleared(void
     z_sleep_ms(50);
     ASSERT_FALSE(failure.done);
     ASSERT_FALSE(in_link.done);
-    ASSERT_FALSE(on_mutex.done);
     ASSERT_TRUE(g_session._tp._type == _Z_TRANSPORT_UNICAST_TYPE);
+    // The second sender waits for the tx mutex. (It counts as inside from its first step into the gate: if the
+    // failure was marked before it read the mark, it was turned away there instead.)
+    size_t inside = tx_users();
+    ASSERT_TRUE((inside == 2 && !on_mutex.done) || (inside == 1 && on_mutex.done));
 
     // A new sender is turned away without waiting for the mutex.
     ASSERT_EQ_I32(send_put(Z_CONGESTION_CONTROL_BLOCK), _Z_ERR_TRANSPORT_NOT_AVAILABLE);
@@ -242,7 +251,9 @@ static void test_failure_turns_senders_away_before_the_transport_is_cleared(void
 #endif
     _z_transport_message_t ka = _z_t_msg_make_keep_alive();
     ASSERT_EQ_I32(_z_send_t_msg(&g_session._tp, &ka), _Z_ERR_TRANSPORT_NOT_AVAILABLE);
-    ASSERT_EQ_U32(tx_users(), 2);
+    // A query counts the peers to know how many finals to expect: none on a transport that is on its way out.
+    ASSERT_EQ_U32(_z_transport_get_peers_count(&g_session._tp), 0);
+    ASSERT_EQ_U32(tx_users(), inside);
 
     set_gate(true);
     ASSERT_OK(_z_task_join(&in_link.task));
@@ -320,11 +331,51 @@ static void test_dropped_message_does_not_hold_the_transport(void) {
     cleanup_session();
 }
 
+// Counting the peers takes the peer mutex, which a clear destroys: the clear waits for a count in progress, as it
+// waits for a sender.
+static void *count_main(void *arg) {
+    worker_t *w = (worker_t *)arg;
+    w->result = (z_result_t)_z_transport_get_peers_count(&g_session._tp);
+    w->done = true;
+    return NULL;
+}
+
+static void test_clear_waits_for_a_peer_count_in_progress(void) {
+    setup_session();
+
+    // Hold the count on the peer mutex
+    _z_transport_peer_mutex_lock(transport_common());
+    worker_t count;
+    start(&count, count_main);
+    WAIT_UNTIL(tx_users() == 1);
+
+    worker_t clear;
+    start(&clear, clear_main);
+    WAIT_UNTIL(_z_transport_is_lost(&g_session._tp));
+    z_sleep_ms(100);
+    ASSERT_FALSE(clear.done);
+    ASSERT_FALSE(count.done);
+    ASSERT_TRUE(g_session._tp._type == _Z_TRANSPORT_UNICAST_TYPE);
+    // A count that starts now does not touch the transport
+    ASSERT_EQ_U32(_z_transport_get_peers_count(&g_session._tp), 0);
+
+    _z_transport_peer_mutex_unlock(transport_common());
+    ASSERT_OK(_z_task_join(&count.task));
+    ASSERT_OK(_z_task_join(&clear.task));
+    // The count that was inside saw the peer
+    ASSERT_EQ_I32(count.result, 1);
+    ASSERT_TRUE(g_session._tp._type == _Z_TRANSPORT_NONE);
+    ASSERT_EQ_U32(_z_transport_get_peers_count(&g_session._tp), 0);
+
+    cleanup_session();
+}
+
 int main(void) {
     ASSERT_OK(_z_mutex_init(&g_gate_mutex));
     ASSERT_OK(_z_condvar_init(&g_gate_cond));
     test_failure_turns_senders_away_before_the_transport_is_cleared();
     test_clear_waits_for_a_sender_in_flight();
+    test_clear_waits_for_a_peer_count_in_progress();
     test_dropped_message_does_not_hold_the_transport();
     _z_condvar_drop(&g_gate_cond);
     _z_mutex_drop(&g_gate_mutex);

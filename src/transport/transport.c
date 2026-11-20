@@ -27,21 +27,29 @@
 
 size_t _z_transport_get_peers_count(_z_transport_t *zt) {
     size_t count = 0;
-    switch (zt->_type) {
-        case _Z_TRANSPORT_UNICAST_TYPE:
-            _z_transport_peer_mutex_lock(&zt->_transport._unicast._common);
-            count = _z_transport_peer_unicast_slist_len(zt->_transport._unicast._peers);
-            _z_transport_peer_mutex_unlock(&zt->_transport._unicast._common);
-            return count;
-        case _Z_TRANSPORT_MULTICAST_TYPE:
-        case _Z_TRANSPORT_RAWETH_TYPE:
-            _z_transport_peer_mutex_lock(&zt->_transport._multicast._common);
-            count = _z_transport_peer_multicast_slist_len(zt->_transport._multicast._peers);
-            _z_transport_peer_mutex_unlock(&zt->_transport._multicast._common);
-            return count;
-        default:
-            return 0;
+    _z_transport_type_t type = zt->_type;
+    if ((type != _Z_TRANSPORT_UNICAST_TYPE) && (type != _Z_TRANSPORT_MULTICAST_TYPE) &&
+        (type != _Z_TRANSPORT_RAWETH_TYPE)) {
+        return 0;
     }
+    // The peer mutex and the peer list are destroyed when the transport is cleared, and the caller (a query that
+    // counts the finals to expect) holds nothing that would keep the clear out. Count behind the gate of the
+    // senders: a transport that is marked as failed has no peer to wait for, and _z_transport_clear waits for whoever
+    // is inside.
+    _z_transport_common_t *ztc =
+        (type == _Z_TRANSPORT_UNICAST_TYPE) ? &zt->_transport._unicast._common : &zt->_transport._multicast._common;
+    if (_z_transport_tx_enter(ztc) != _Z_RES_OK) {
+        return 0;
+    }
+    _z_transport_peer_mutex_lock(ztc);
+    if (type == _Z_TRANSPORT_UNICAST_TYPE) {
+        count = _z_transport_peer_unicast_slist_len(zt->_transport._unicast._peers);
+    } else {
+        count = _z_transport_peer_multicast_slist_len(zt->_transport._multicast._peers);
+    }
+    _z_transport_peer_mutex_unlock(ztc);
+    _z_transport_tx_leave(ztc);
+    return count;
 }
 
 _z_transport_common_t *_z_transport_get_common(_z_transport_t *zt) {
