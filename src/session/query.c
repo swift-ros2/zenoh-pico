@@ -54,11 +54,17 @@ static bool _z_pending_query_timeout(const _z_pending_query_t *foo, const _z_pen
     return result;
 }
 
+// Dropping a pending query calls its drop function, which is the application's: it runs after the session mutex is
+// released, as in _z_flush_pending_queries. Under the mutex it could not declare or undeclare anything on the session
+// (the mutex is not recursive), and the thread, usually the session's own, waited for itself.
 void _z_pending_query_process_timeout(_z_session_t *zn) {
+    _z_pending_query_slist_t *expired = _z_pending_query_slist_new();
     _z_session_mutex_lock(zn);
     // Extract all queries with timeout elapsed
-    zn->_pending_queries = _z_pending_query_slist_drop_all_filter(zn->_pending_queries, _z_pending_query_timeout, NULL);
+    zn->_pending_queries =
+        _z_pending_query_slist_extract_all_filter(zn->_pending_queries, &expired, _z_pending_query_timeout, NULL);
     _z_session_mutex_unlock(zn);
+    _z_pending_query_slist_free(&expired);
 }
 
 _z_fut_fn_result_t _z_pending_query_process_timeout_task_fn(void *session_arg, _z_executor_t *executor) {
@@ -248,29 +254,36 @@ z_result_t _z_trigger_query_reply_final(_z_session_t *zn, _z_zint_t id) {
     }
     // Finalize query if requested: drop pending query and trigger dropper callback,
     // which is equivalent to a reply with FINAL.
+    _z_pending_query_slist_t *finished = _z_pending_query_slist_new();
     if (do_finalize) {
         zn->_pending_queries =
-            _z_pending_query_slist_drop_first_filter(zn->_pending_queries, _z_pending_query_eq, pen_qry);
+            _z_pending_query_slist_extract_first_filter(zn->_pending_queries, &finished, _z_pending_query_eq, pen_qry);
     }
     _z_session_mutex_unlock(zn);
+    _z_pending_query_slist_free(&finished);
     return _Z_RES_OK;
 }
 
 void _z_unregister_pending_query(_z_session_t *zn, _z_zint_t qid) {
     _z_pending_query_t target = {0};
     target._id = qid;
+    _z_pending_query_slist_t *removed = _z_pending_query_slist_new();
     _z_session_mutex_lock(zn);
-    zn->_pending_queries = _z_pending_query_slist_drop_first_filter(zn->_pending_queries, _z_pending_query_eq, &target);
+    zn->_pending_queries =
+        _z_pending_query_slist_extract_first_filter(zn->_pending_queries, &removed, _z_pending_query_eq, &target);
     _z_session_mutex_unlock(zn);
+    _z_pending_query_slist_free(&removed);
 }
 
 void _z_unregister_pending_queries_from_querier(_z_session_t *zn, uint32_t querier_id) {
     _z_pending_query_t target = {0};
     target._querier_id = _z_optional_id_make_some(querier_id);
+    _z_pending_query_slist_t *removed = _z_pending_query_slist_new();
     _z_session_mutex_lock(zn);
     zn->_pending_queries =
-        _z_pending_query_slist_drop_all_filter(zn->_pending_queries, _z_pending_query_querier_eq, &target);
+        _z_pending_query_slist_extract_all_filter(zn->_pending_queries, &removed, _z_pending_query_querier_eq, &target);
     _z_session_mutex_unlock(zn);
+    _z_pending_query_slist_free(&removed);
 }
 
 void _z_flush_pending_queries(_z_session_t *zn) {
