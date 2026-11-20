@@ -348,6 +348,9 @@ static void test_clear_waits_for_a_peer_count_in_progress(void) {
     worker_t count;
     start(&count, count_main);
     WAIT_UNTIL(tx_users() == 1);
+    // The counter rises before the count reads the failure mark. Give it the time to get past the mark and onto
+    // the mutex before the clear sets the mark: a count that read the mark set would be turned away instead.
+    z_sleep_ms(50);
 
     worker_t clear;
     start(&clear, clear_main);
