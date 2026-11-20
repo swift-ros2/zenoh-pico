@@ -229,6 +229,11 @@ typedef struct {
     // Known valid peers
     _z_transport_peer_unicast_slist_t *_peers;
     _z_pending_peers_t _pending_peers;
+    // Lease advertised by the peer: it paces its own KEEP_ALIVEs on it, so in
+    // client mode the peer is considered gone only after this long without
+    // receiving anything. _common._lease (the lowest of both leases) paces our
+    // KEEP_ALIVEs.
+    volatile _z_zint_t _peer_lease;
 } _z_transport_unicast_t;
 
 #define _Z_MULTICAST_ADDR_BUFF_SIZE 32  // Arbitrary size that must be able to contain any link address.
@@ -268,6 +273,7 @@ typedef struct {
     _z_zint_t _initial_sn_rx;
     _z_zint_t _initial_sn_tx;
     _z_zint_t _lease;
+    _z_zint_t _peer_lease;
     z_whatami_t _remote_whatami;
     uint8_t _key_id_res;
     uint8_t _req_id_res;

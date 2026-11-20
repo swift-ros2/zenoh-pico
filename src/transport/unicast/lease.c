@@ -141,10 +141,12 @@ _z_fut_fn_result_t _zp_unicast_lease_task_fn(void *ztu_arg, _z_executor_t *execu
         if (curr_peer->common._received) {
             // Reset the lease parameters
             curr_peer->common._received = false;
-            return _z_fut_fn_result_wake_up_after((unsigned long)ztu->_common._lease);
+            // Expire the peer on its own lease (it paces its KEEP_ALIVEs on
+            // that); ours go out on the lowest of both leases.
+            return _z_fut_fn_result_wake_up_after((unsigned long)ztu->_peer_lease);
         } else {
             // THIS LOG STRING USED IN TEST, change with caution
-            _Z_INFO("Closing session because it has expired after %zums", ztu->_common._lease);
+            _Z_INFO("Closing session because it has expired after %zums", ztu->_peer_lease);
             return _zp_unicast_failed_result(ztu, executor);
         }
     }
