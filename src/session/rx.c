@@ -174,10 +174,46 @@ static z_result_t _z_handle_response(_z_session_t *zn, _z_n_msg_response_t *resp
     return _Z_RES_OK;
 }
 
+// The key expression of a message that carries one and whose handler resolves it, or NULL.
+static const _z_wireexpr_t *_z_n_msg_keyexpr(const _z_zenoh_message_t *msg) {
+    switch (msg->_tag) {
+        case _Z_N_PUSH:
+            return &msg->_body._push._key;
+        case _Z_N_REQUEST:
+            return &msg->_body._request._key;
+        case _Z_N_RESPONSE:
+            return (msg->_body._response._tag == _Z_RESPONSE_BODY_REPLY) ? &msg->_body._response._key : NULL;
+        case _Z_N_DECLARE:
+            switch (msg->_body._declare._decl._tag) {
+                case _Z_DECL_SUBSCRIBER:
+                    return &msg->_body._declare._decl._body._decl_subscriber._keyexpr;
+                case _Z_DECL_QUERYABLE:
+                    return &msg->_body._declare._decl._body._decl_queryable._keyexpr;
+                case _Z_DECL_TOKEN:
+                    return &msg->_body._declare._decl._body._decl_token._keyexpr;
+                default:
+                    return NULL;
+            }
+        default:
+            return NULL;
+    }
+}
+
+// True when a message from a peer names its key expression by an id that this session declared. The session may
+// have undeclared that id since: the peer keeps using it until it has processed the undeclaration.
+static bool _z_n_msg_names_own_keyexpr(const _z_zenoh_message_t *msg, const _z_transport_peer_common_t *peer) {
+    const _z_wireexpr_t *key = _z_n_msg_keyexpr(msg);
+    return (peer != NULL) && (key != NULL) && (key->_id != Z_RESOURCE_ID_NONE) && _z_wireexpr_is_local(key);
+}
+
 z_result_t _z_handle_network_message(_z_transport_common_t *transport, _z_zenoh_message_t *msg,
                                      _z_transport_peer_common_t *peer) {
     z_result_t ret = _Z_RES_OK;
     _z_session_t *zn = _z_transport_common_get_session(transport);
+    // Read now: the handlers consume the message
+    bool names_own_keyexpr = _z_n_msg_names_own_keyexpr(msg, peer);
+    bool is_request = (msg->_tag == _Z_N_REQUEST);
+    _z_zint_t request_id = is_request ? msg->_body._request._rid : 0;
 
     switch (msg->_tag) {
         case _Z_N_DECLARE:
@@ -227,6 +263,23 @@ z_result_t _z_handle_network_message(_z_transport_common_t *transport, _z_zenoh_
             _Z_ERROR("Unknown network message ID");
             _z_n_msg_clear(msg);
             break;
+    }
+    if ((ret == _Z_ERR_KEYEXPR_UNKNOWN) && names_own_keyexpr) {
+        // The message names a key expression that this session declared and has undeclared since, with the last
+        // subscriber or queryable on it. The peer sent the message before it processed the undeclaration, which is
+        // no protocol error: an error here would make the caller close the transport. (An id that this session
+        // never declared cannot be told apart and is dropped the same way.) The handler has released the message;
+        // nothing is left that could take it. A request gets its final so that the other side does not wait for a
+        // reply until its timeout (as for a query that no queryable matches, a final that cannot be sent is not an
+        // error of the received message).
+        _Z_INFO("Dropping a message that names an undeclared key expression of this session");
+        ret = _Z_RES_OK;
+        if (is_request) {
+            _z_zenoh_message_t final;
+            _z_n_msg_make_response_final(&final, request_id);
+            (void)_z_send_n_msg(zn, &final, Z_RELIABILITY_RELIABLE, Z_CONGESTION_CONTROL_BLOCK, NULL);
+            _z_msg_clear(&final);
+        }
     }
     return ret;
 }
