@@ -48,6 +48,9 @@ static inline z_result_t _z_runtime_start(_z_runtime_t *runtime, z_task_attr_t *
 }
 
 static inline z_result_t _z_runtime_stop(_z_runtime_t *runtime) { return _z_background_executor_stop(runtime); }
+static inline bool _z_runtime_is_current_thread(const _z_runtime_t *runtime) {
+    return _z_background_executor_is_current_thread(runtime);
+}
 #else
 typedef _z_executor_t _z_runtime_t;
 static inline _z_fut_handle_t _z_runtime_spawn(_z_runtime_t *runtime, _z_fut_t *fut) {
@@ -71,6 +74,11 @@ static inline bool _z_runtime_spin_once(_z_runtime_t *runtime) {
 static inline z_result_t _z_runtime_stop(_z_runtime_t *runtime) {
     _ZP_UNUSED(runtime);
     return _Z_RES_OK;
+}
+// Without threads the runtime is spun by the application: there is no thread of its own to compare with.
+static inline bool _z_runtime_is_current_thread(const _z_runtime_t *runtime) {
+    _ZP_UNUSED(runtime);
+    return false;
 }
 #endif
 

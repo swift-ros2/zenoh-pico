@@ -19,6 +19,7 @@
 #include <stdint.h>
 
 #include "zenoh-pico/api/constants.h"
+#include "zenoh-pico/collections/atomic.h"
 #include "zenoh-pico/collections/element.h"
 #include "zenoh-pico/collections/list.h"
 #include "zenoh-pico/collections/refcount.h"
@@ -90,6 +91,8 @@ typedef struct {
     void *_arg;
     _z_sync_group_notifier_t _session_callback_drop_notifier;
     _z_sync_group_notifier_t _subscriber_callback_drop_notifier;
+    // Set when the subscription is unregistered. A dispatch that already holds it does not call it any more.
+    _z_atomic_bool_t _unregistered;
 } _z_subscription_t;
 
 bool _z_subscription_eq(const _z_subscription_t *one, const _z_subscription_t *two);
@@ -130,6 +133,8 @@ typedef struct {
     z_locality_t _allowed_origin;
     _z_sync_group_notifier_t _session_callback_drop_notifier;
     _z_sync_group_notifier_t _queryable_callback_drop_notifier;
+    // Set when the queryable is unregistered. A dispatch that already holds it does not call it any more.
+    _z_atomic_bool_t _unregistered;
 } _z_session_queryable_t;
 
 static inline _z_session_queryable_t _z_session_queryable_null(void) {

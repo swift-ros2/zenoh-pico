@@ -91,6 +91,26 @@ static inline void _z_session_admin_space_mutex_lock(_z_session_t *zn) { _ZP_UNU
 static inline void _z_session_admin_space_mutex_unlock(_z_session_t *zn) { _ZP_UNUSED(zn); }
 #endif
 
+// Waits, after an entity was unregistered, until none of its callbacks is running or can still be called, so that
+// the caller may free what the callback uses.
+//
+// The session's executor thread runs the callbacks for everything that arrives from the network, so a call from that
+// thread comes from inside a callback, possibly the entity's own. Waiting there would wait for the caller itself and
+// stop the session for good, so it returns at once: no other callback can start in the meantime, the dispatch in
+// progress skips an unregistered entity, and the entity is dropped when that dispatch ends.
+//
+// With local delivery (Z_FEATURE_LOCAL_SUBSCRIBER, Z_FEATURE_LOCAL_QUERYABLE) a callback can also run on the thread
+// that publishes or queries. An undeclare from such a callback is not recognised here and still waits.
+static inline z_result_t _z_session_wait_callback_drop(_z_session_t *zn, _z_sync_group_t *sync_group) {
+    if (!_z_sync_group_check(sync_group)) {
+        return _Z_RES_OK;
+    }
+    if (_z_runtime_is_current_thread(&zn->_runtime)) {
+        return _Z_RES_OK;
+    }
+    return _z_sync_group_wait(sync_group);
+}
+
 #ifdef __cplusplus
 }
 #endif

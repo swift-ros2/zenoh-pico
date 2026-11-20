@@ -63,6 +63,9 @@ z_result_t _z_background_executor_get_fut_status(_z_background_executor_t *be, c
 z_result_t _z_background_executor_cancel_fut(_z_background_executor_t *be, const _z_fut_handle_t *handle);
 z_result_t _z_background_executor_clone(_z_background_executor_t *dst, const _z_background_executor_t *src);
 bool _z_background_executor_is_running(const _z_background_executor_t *be);
+// Returns true when the calling thread is the executor's own thread, that is, when the call comes from one of its
+// tasks or from a callback that such a task invoked.
+bool _z_background_executor_is_current_thread(const _z_background_executor_t *be);
 #ifdef __cplusplus
 }
 #endif

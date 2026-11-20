@@ -266,6 +266,10 @@ z_result_t _z_trigger_queryables(_z_transport_common_t *transport, _z_msg_query_
     // Parse session_queryable svec
     for (size_t i = 0; i < qle_nb; i++) {
         _z_session_queryable_t *qle_info = _Z_RC_IN_VAL(_z_session_queryable_rc_svec_get(qles, i));
+        // Undeclared while this dispatch holds it (see _z_trigger_subscriptions_impl): not called any more
+        if (_z_atomic_bool_load(&qle_info->_unregistered, _z_memory_order_seq_cst)) {
+            continue;
+        }
         if (i + 1 == qle_nb) {
             qle_info->_callback(&query, qle_info->_arg);
         } else {
@@ -285,6 +289,7 @@ void _z_unregister_session_queryable(_z_session_t *zn, _z_session_queryable_rc_t
     _z_session_queryable_t *qle_val = _Z_RC_IN_VAL(qle);
     _z_write_filter_notify_queryable(zn, &qle_val->_key._inner, qle_val->_allowed_origin, qle_val->_complete, false);
 #endif
+    _z_atomic_bool_store(&_Z_RC_IN_VAL(qle)->_unregistered, true, _z_memory_order_seq_cst);
     _z_session_mutex_lock(zn);
     _z_unsafe_queryable_cache_invalidate(zn);
     zn->_local_queryable =

@@ -283,6 +283,13 @@ bool _z_background_executor_is_running(const _z_background_executor_t *be) {
     }
     return _z_atomic_bool_load(&_Z_RC_IN_VAL(&be->_inner)->_started, _z_memory_order_acquire);
 }
+
+bool _z_background_executor_is_current_thread(const _z_background_executor_t *be) {
+    if (_Z_RC_IS_NULL(&be->_inner)) {
+        return false;
+    }
+    return _is_called_from_executor(_Z_RC_IN_VAL(&be->_inner));
+}
 #else
 // to prevent "empty compilation unit" warning when multi-threading is disabled
 typedef int _z_background_executor_inner_t;

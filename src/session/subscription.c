@@ -282,12 +282,20 @@ z_result_t _z_trigger_subscriptions_impl(_z_session_t *zn, _z_subscriber_kind_t 
     _z_sample_steal_data(&sample, &sub_infos.ke, payload, timestamp, encoding, sample_kind, qos, attachment,
                          reliability, source_info);
     // Parse subscription infos svec
+    // A subscription can be undeclared while this dispatch holds it: by another thread, which then waits for the
+    // dispatch to end, or by a callback of this very dispatch, which cannot wait for itself (see
+    // _z_session_wait_callback_drop). Either way its callback is not called any more.
     if (sub_nb == 1) {
         _z_subscription_t *sub_info = _Z_RC_IN_VAL(_z_subscription_rc_svec_get(subs, 0));
-        sub_info->_callback(&sample, sub_info->_arg);
+        if (!_z_atomic_bool_load(&sub_info->_unregistered, _z_memory_order_seq_cst)) {
+            sub_info->_callback(&sample, sub_info->_arg);
+        }
     } else {
         for (size_t i = 0; i < sub_nb; i++) {
             _z_subscription_t *sub_info = _Z_RC_IN_VAL(_z_subscription_rc_svec_get(subs, i));
+            if (_z_atomic_bool_load(&sub_info->_unregistered, _z_memory_order_seq_cst)) {
+                continue;
+            }
             if (i + 1 == sub_nb) {
                 sub_info->_callback(&sample, sub_info->_arg);
             } else {
@@ -314,6 +322,7 @@ void _z_unregister_subscription(_z_session_t *zn, _z_subscriber_kind_t kind, _z_
         _z_write_filter_notify_subscriber(zn, &sub_val->_key._inner, sub_val->_allowed_origin, false);
     }
 #endif
+    _z_atomic_bool_store(&_Z_RC_IN_VAL(sub)->_unregistered, true, _z_memory_order_seq_cst);
     _z_session_mutex_lock(zn);
     _z_unsafe_subscription_cache_invalidate(zn);
     if (kind == _Z_SUBSCRIBER_KIND_SUBSCRIBER) {

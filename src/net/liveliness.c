@@ -249,8 +249,7 @@ z_result_t _z_undeclare_liveliness_subscriber(_z_subscriber_t *sub) {
     _z_n_msg_clear(&n_msg);
 
     _z_unregister_subscription(_Z_RC_IN_VAL(&sub->_zn), _Z_SUBSCRIBER_KIND_LIVELINESS_SUBSCRIBER, &s);
-    return _z_sync_group_check(&sub->_callback_drop_sync_group) ? _z_sync_group_wait(&sub->_callback_drop_sync_group)
-                                                                : _Z_RES_OK;
+    return _z_session_wait_callback_drop(_Z_RC_IN_VAL(&sub->_zn), &sub->_callback_drop_sync_group);
 }
 #endif  // Z_FEATURE_SUBSCRIPTION == 1
 

@@ -305,10 +305,12 @@ z_result_t _z_undeclare_subscriber(_z_subscriber_t *sub) {
         _z_n_msg_clear(&n_msg);
     }
     _z_unregister_subscription(zn, _Z_SUBSCRIBER_KIND_SUBSCRIBER, &s);
+    // See _z_session_wait_callback_drop; read while the session reference is still held
+    bool in_callback = _z_runtime_is_current_thread(&zn->_runtime);
 #if Z_FEATURE_SESSION_CHECK == 1
     _z_session_rc_drop(&sess_rc);
 #endif
-    z_result_t wait_ret = _z_sync_group_check(&sub->_callback_drop_sync_group)
+    z_result_t wait_ret = (!in_callback && _z_sync_group_check(&sub->_callback_drop_sync_group))
                               ? _z_sync_group_wait(&sub->_callback_drop_sync_group)
                               : _Z_RES_OK;
     return ret == _Z_RES_OK ? wait_ret : ret;
@@ -419,9 +421,7 @@ z_result_t _z_undeclare_queryable(_z_queryable_t *qle) {
         _z_n_msg_clear(&n_msg);
     }
     _z_unregister_session_queryable(zn, &q);
-    z_result_t wait_ret = _z_sync_group_check(&qle->_callback_drop_sync_group)
-                              ? _z_sync_group_wait(&qle->_callback_drop_sync_group)
-                              : _Z_RES_OK;
+    z_result_t wait_ret = _z_session_wait_callback_drop(zn, &qle->_callback_drop_sync_group);
     ret = ret == _Z_RES_OK ? wait_ret : ret;
 #if Z_FEATURE_SESSION_CHECK == 1
     _z_session_rc_drop(&sess_rc);
