@@ -79,6 +79,10 @@ z_result_t _z_unicast_transport_create(_z_transport_t *zt, _z_link_t *zl,
     zt->_type = _Z_TRANSPORT_UNICAST_TYPE;
     _z_transport_unicast_t *ztu = &zt->_transport._unicast;
     memset(ztu, 0, sizeof(_z_transport_unicast_t));
+    // A new transport is not failed and has no sender inside (the previous one, if any, was cleared, which waited for
+    // its senders).
+    _z_atomic_bool_init(&ztu->_common._failed, false);
+    _z_atomic_size_init(&ztu->_common._tx_users, 0);
 
     z_result_t ret = _z_unicast_transport_create_inner(ztu, zl, param);
     if (ret != _Z_RES_OK) {

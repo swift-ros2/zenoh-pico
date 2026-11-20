@@ -80,6 +80,17 @@ z_result_t _z_send_close(_z_transport_t *zt, uint8_t reason, bool link_only) {
 z_result_t _z_transport_close(_z_transport_t *zt, uint8_t reason) { return _z_send_close(zt, reason, false); }
 
 void _z_transport_clear(_z_transport_t *zt) {
+    _z_transport_common_t *ztc = _z_transport_get_common(zt);
+    if (ztc == NULL) {
+        return;
+    }
+    // The tx mutex, the buffers and the link are destroyed below, and senders do not hold a lock that would keep them
+    // out: stop new ones and wait for those that entered before the mark. A sender stays inside for one send at
+    // most, so the wait is bounded by the link's send timeout.
+    _z_transport_common_mark_failed(ztc);
+    while (_z_atomic_size_load(&ztc->_tx_users, _z_memory_order_seq_cst) != 0) {
+        z_sleep_ms(1);
+    }
     switch (zt->_type) {
         case _Z_TRANSPORT_UNICAST_TYPE:
             _z_unicast_transport_clear(&zt->_transport._unicast);

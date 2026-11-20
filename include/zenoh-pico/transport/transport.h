@@ -18,6 +18,7 @@
 #include <assert.h>
 #include <stdint.h>
 
+#include "zenoh-pico/collections/atomic.h"
 #include "zenoh-pico/collections/element.h"
 #include "zenoh-pico/collections/refcount.h"
 #include "zenoh-pico/collections/slice.h"
@@ -199,6 +200,13 @@ typedef struct {
     // Here we assume the value is set only by the session _z_open
     // and after it only read by the transport tasks, so we don't need to make it atomic or protect it with mutexes.
     _z_transport_state_t _state;
+    // Set when the transport starts to fail or to close, before its CLOSE message is sent and before it is cleared.
+    // It stays set until the transport is created again. Senders check it (see _z_transport_tx_enter), and an
+    // application can read it through _z_transport_is_lost to stop using the session.
+    _z_atomic_bool_t _failed;
+    // Number of threads between _z_transport_tx_enter and _z_transport_tx_leave. _z_transport_clear waits for it to
+    // reach zero before it destroys the tx mutex, the buffers and the link.
+    _z_atomic_size_t _tx_users;
 #if Z_FEATURE_AUTO_RECONNECT == 1
     _z_transport_tasks_t _tasks;
 #endif
@@ -319,6 +327,48 @@ static inline void _z_transport_get_link_properties(const _z_transport_common_t 
         *mtu = transport->_link->_mtu;
         *is_streamed = transport->_link->_cap._flow == Z_LINK_CAP_FLOW_STREAM;
         *is_reliable = transport->_link->_cap._is_reliable;
+    }
+}
+
+// Marks the transport as lost. From here on no sender enters it (see _z_transport_tx_enter).
+static inline void _z_transport_common_mark_failed(_z_transport_common_t *ztc) {
+    _z_atomic_bool_store(&ztc->_failed, true, _z_memory_order_seq_cst);
+}
+
+static inline bool _z_transport_common_is_failed(_z_transport_common_t *ztc) {
+    return _z_atomic_bool_load(&ztc->_failed, _z_memory_order_seq_cst);
+}
+
+// Enters a send section. It fails once the transport is marked as failed: the caller must then not touch the
+// transport, because _z_transport_clear may destroy it at any moment. Every successful call is paired with
+// _z_transport_tx_leave. The counter is raised before the mark is read and _z_transport_clear reads the counter after
+// it set the mark, so either the sender sees the mark or the clear sees the sender.
+static inline z_result_t _z_transport_tx_enter(_z_transport_common_t *ztc) {
+    _z_atomic_size_fetch_add(&ztc->_tx_users, 1, _z_memory_order_seq_cst);
+    if (_z_transport_common_is_failed(ztc)) {
+        _z_atomic_size_fetch_sub(&ztc->_tx_users, 1, _z_memory_order_seq_cst);
+        return _Z_ERR_TRANSPORT_NOT_AVAILABLE;
+    }
+    return _Z_RES_OK;
+}
+
+static inline void _z_transport_tx_leave(_z_transport_common_t *ztc) {
+    _z_atomic_size_fetch_sub(&ztc->_tx_users, 1, _z_memory_order_seq_cst);
+}
+
+// True when the transport is gone or on its way out: its failure was detected (lease expiry, read or keep-alive
+// error) or it is being closed. Sends on it fail with _Z_ERR_TRANSPORT_NOT_AVAILABLE from this moment, which can be
+// seconds before the type becomes _Z_TRANSPORT_NONE, because the CLOSE message is sent in between.
+static inline bool _z_transport_is_lost(_z_transport_t *zt) {
+    switch (zt->_type) {
+        case _Z_TRANSPORT_UNICAST_TYPE:
+            return _z_transport_common_is_failed(&zt->_transport._unicast._common);
+        case _Z_TRANSPORT_MULTICAST_TYPE:
+            return _z_transport_common_is_failed(&zt->_transport._multicast._common);
+        case _Z_TRANSPORT_RAWETH_TYPE:
+            return _z_transport_common_is_failed(&zt->_transport._raweth._common);
+        default:
+            return true;
     }
 }
 

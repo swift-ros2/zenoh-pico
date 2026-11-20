@@ -48,6 +48,10 @@ z_result_t _z_multicast_transport_create(_z_transport_t *zt, _z_link_t *zl,
             _Z_ERROR_RETURN(_Z_ERR_GENERIC);
     }
 
+    // A new transport is not failed and has no sender inside
+    _z_atomic_bool_init(&ztm->_common._failed, false);
+    _z_atomic_size_init(&ztm->_common._tx_users, 0);
+
     // Initialize persistent address buffer
     ztm->_zbuf_addr = _z_slice_alias_buf(ztm->_zbuf_addr_buf, sizeof(ztm->_zbuf_addr_buf));
 

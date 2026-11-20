@@ -74,6 +74,11 @@ z_result_t _zp_unicast_send_keep_alive(_z_transport_unicast_t *ztu) {
 
 _z_fut_fn_result_t _zp_unicast_failed_result(_z_transport_unicast_t *ztu, _z_executor_t *executor) {
     _z_session_t *zs = _z_transport_common_get_session(&ztu->_common);
+    // Mark the transport first: from here on senders are turned away with an error and _z_transport_is_lost is true.
+    // The CLOSE below can block for the socket's send timeout when the peer no longer reads, and the transport keeps
+    // its type until it is cleared, so without the mark it looks usable all that time while it is about to be
+    // destroyed under whoever is still sending on it.
+    _z_transport_common_mark_failed(&ztu->_common);
 #if Z_FEATURE_LIVELINESS == 1 && Z_FEATURE_SUBSCRIPTION == 1
     _z_liveliness_subscription_undeclare_all(zs);
 #endif
@@ -96,7 +101,10 @@ _z_fut_fn_result_t _zp_unicast_failed_result(_z_transport_unicast_t *ztu, _z_exe
         _z_connectivity_peer_event_data_clear(&disconnected_peer);
     }
 #endif
-    _z_unicast_transport_close(ztu, _Z_CLOSE_EXPIRED);
+    // The ordinary send path refuses a transport that is marked as failed
+    _z_transport_message_t cm = _z_t_msg_make_close(_Z_CLOSE_EXPIRED, false);
+    (void)_z_transport_tx_send_t_msg_on_failed(&ztu->_common, &cm);
+    _z_t_msg_clear(&cm);
     _z_session_transport_mutex_lock(zs);
 #if Z_FEATURE_AUTO_RECONNECT == 1
     // Store weak session to reuse for reconnection.

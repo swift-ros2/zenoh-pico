@@ -47,6 +47,8 @@ z_result_t _zp_multicast_send_keep_alive(_z_transport_multicast_t *ztm) {
 
 _z_fut_fn_result_t _zp_multicast_failed_result(_z_transport_multicast_t *ztm, _z_executor_t *executor) {
     _z_session_t *session = _z_transport_common_get_session(&ztm->_common);
+    // Senders are turned away from here on (see _zp_unicast_failed_result)
+    _z_transport_common_mark_failed(&ztm->_common);
 
 #if Z_FEATURE_LIVELINESS == 1 && Z_FEATURE_SUBSCRIPTION == 1
     _z_liveliness_subscription_undeclare_all(session);

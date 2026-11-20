@@ -266,15 +266,36 @@ static z_result_t _z_transport_tx_send_t_msg_inner(_z_transport_common_t *ztc, c
     return _z_transport_tx_flush_buffer(ztc, peers);
 }
 
+// Leaves a send section entered with _z_transport_tx_enter whose tx mutex is held.
+static inline void _z_transport_tx_unlock_and_leave(_z_transport_common_t *ztc, bool unlock) {
+    if (unlock) {
+        _z_transport_tx_mutex_unlock(ztc);
+    }
+    _z_transport_tx_leave(ztc);
+}
+
 z_result_t _z_transport_tx_send_t_msg(_z_transport_common_t *ztc, const _z_transport_message_t *t_msg,
                                       _z_transport_peer_unicast_slist_t *peers) {
     z_result_t ret = _Z_RES_OK;
     _Z_DEBUG("Send session message");
+    _Z_RETURN_IF_ERR(_z_transport_tx_enter(ztc));
     // If sending to a peer list, make sure the peer mutex is locked
     _z_transport_tx_mutex_lock(ztc, true);
+    // The transport may have failed while this thread waited for the mutex.
+    if (_z_transport_common_is_failed(ztc)) {
+        _z_transport_tx_unlock_and_leave(ztc, true);
+        return _Z_ERR_TRANSPORT_NOT_AVAILABLE;
+    }
 
     ret = _z_transport_tx_send_t_msg_inner(ztc, t_msg, peers);
 
+    _z_transport_tx_unlock_and_leave(ztc, true);
+    return ret;
+}
+
+z_result_t _z_transport_tx_send_t_msg_on_failed(_z_transport_common_t *ztc, const _z_transport_message_t *t_msg) {
+    _z_transport_tx_mutex_lock(ztc, true);
+    z_result_t ret = _z_transport_tx_send_t_msg_inner(ztc, t_msg, NULL);
     _z_transport_tx_mutex_unlock(ztc);
     return ret;
 }
@@ -288,6 +309,7 @@ static z_result_t _z_transport_tx_send_n_msg(_z_transport_common_t *ztc, const _
                                              _z_transport_peer_unicast_slist_t *peers) {
     z_result_t ret = _Z_RES_OK;
     _Z_DEBUG("Send network message");
+    _Z_RETURN_IF_ERR(_z_transport_tx_enter(ztc));
 
     // Acquire the lock and drop the message if needed
     if (!_z_transport_batch_hold_tx_mutex()) {
@@ -295,13 +317,17 @@ static z_result_t _z_transport_tx_send_n_msg(_z_transport_common_t *ztc, const _
     }
     if (ret != _Z_RES_OK) {
         _Z_INFO("Dropping zenoh message because of congestion control");
+        _z_transport_tx_leave(ztc);
         return ret;
+    }
+    // The transport may have failed while this thread waited for the mutex.
+    if (_z_transport_common_is_failed(ztc)) {
+        _z_transport_tx_unlock_and_leave(ztc, !_z_transport_batch_hold_tx_mutex());
+        return _Z_ERR_TRANSPORT_NOT_AVAILABLE;
     }
     // Process message
     ret = _z_transport_tx_send_n_msg_inner(ztc, n_msg, reliability, peers);
-    if (!_z_transport_batch_hold_tx_mutex()) {
-        _z_transport_tx_mutex_unlock(ztc);
-    }
+    _z_transport_tx_unlock_and_leave(ztc, !_z_transport_batch_hold_tx_mutex());
     return ret;
 }
 
@@ -309,6 +335,7 @@ static z_result_t _z_transport_tx_send_n_batch(_z_transport_common_t *ztc, z_con
                                                _z_transport_peer_unicast_slist_t *peers) {
 #if Z_FEATURE_BATCHING == 1
     z_result_t ret = _Z_RES_OK;
+    _Z_RETURN_IF_ERR(_z_transport_tx_enter(ztc));
     // Check batch size
     if (ztc->_batch_count > 0) {
         // Acquire the lock and drop the message if needed
@@ -317,16 +344,21 @@ static z_result_t _z_transport_tx_send_n_batch(_z_transport_common_t *ztc, z_con
         }
         if (ret != _Z_RES_OK) {
             _Z_INFO("Dropping zenoh batch because of congestion control");
+            _z_transport_tx_leave(ztc);
             return ret;
+        }
+        // The transport may have failed while this thread waited for the mutex.
+        if (_z_transport_common_is_failed(ztc)) {
+            _z_transport_tx_unlock_and_leave(ztc, !_z_transport_batch_hold_tx_mutex());
+            return _Z_ERR_TRANSPORT_NOT_AVAILABLE;
         }
         // Send batch
         _Z_DEBUG("Send network batch");
         ret = _z_transport_tx_flush_buffer(ztc, peers);
-        if (!_z_transport_batch_hold_tx_mutex()) {
-            _z_transport_tx_mutex_unlock(ztc);
-        }
+        _z_transport_tx_unlock_and_leave(ztc, !_z_transport_batch_hold_tx_mutex());
         return ret;
     }
+    _z_transport_tx_leave(ztc);
     return _Z_RES_OK;
 #else
     _ZP_UNUSED(ztc);
