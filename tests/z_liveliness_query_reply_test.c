@@ -15,7 +15,8 @@
 // Network-less test of the replies to a liveliness query. A router answers the query (an interest in the current
 // tokens only) with one token declaration per matching token, and gives every one of them the id 0, because a token
 // reported this way is never undeclared. Each declaration must be handled without an error: an error from the network
-// message handler closes the transport, so a query that matches two tokens would cost the session.
+// message handler closes the transport, so a query that matches two tokens would cost the session. The end of another
+// interest of the session must not end the query either.
 
 #undef NDEBUG
 #include <assert.h>
@@ -35,6 +36,7 @@
 #include "zenoh-pico/session/keyexpr.h"
 #include "zenoh-pico/session/liveliness.h"
 #include "zenoh-pico/session/loopback.h"
+#include "zenoh-pico/session/resource.h"
 #include "zenoh-pico/session/session.h"
 #include "zenoh-pico/session/utils.h"
 #include "zenoh-pico/system/platform.h"
@@ -230,10 +232,38 @@ static void test_repeated_token_declaration_is_accepted(void) {
     cleanup_session();
 }
 
+// A router ends every interest with a DeclareFinal that carries the interest id: the write filter of a publisher, a
+// liveliness subscriber, a liveliness query. The final of another interest must not end a pending query.
+static void test_final_of_another_interest_does_not_end_the_query(void) {
+    setup_session();
+
+    // The id another interest of this session takes, declared just before the query.
+    uint32_t other_interest_id = _z_get_entity_id(&g_session);
+
+    query_result_t res;
+    uint32_t query_id = start_query(QUERY_KEY, &res);
+    assert(query_id != other_interest_id);
+
+    assert(feed_final(other_interest_id) == _Z_RES_OK);
+    assert(res.drops == 0);
+
+    assert(feed_token(TOKEN_A, 0, _z_optional_id_make_some(query_id)) == _Z_RES_OK);
+    assert(feed_token(TOKEN_B, 0, _z_optional_id_make_some(query_id)) == _Z_RES_OK);
+    assert(res.replies == 2);
+    assert(res.drops == 0);
+
+    assert(feed_final(query_id) == _Z_RES_OK);
+    assert(res.replies == 2);
+    assert(res.drops == 1);
+
+    cleanup_session();
+}
+
 int main(void) {
     test_query_with_several_tokens_gets_every_reply();
     test_second_query_gets_its_replies();
     test_repeated_token_declaration_is_accepted();
+    test_final_of_another_interest_does_not_end_the_query();
     printf("z_liveliness_query_reply_test: all tests passed\n");
     return 0;
 }

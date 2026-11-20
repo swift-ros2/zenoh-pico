@@ -142,7 +142,10 @@ _z_liveliness_pending_query_t *_z_unsafe_liveliness_register_pending_query(_z_se
     if (q == NULL) {
         return NULL;
     }
-    uint32_t id = zn->_liveliness_query_id++;
+    // The query goes out as an interest, and this id is the interest id. It comes from the counter of every other
+    // interest (a publisher's write filter, a liveliness subscriber), so that the DeclareFinal a router sends for one
+    // of those cannot end a query that happens to have the same number.
+    uint32_t id = _z_get_entity_id(zn);
     q->_id = id;
     if (_z_liveliness_pending_query_intmap_insert(&zn->_liveliness_pending_queries, id, q) == NULL) {
         z_free(q);
@@ -273,7 +276,6 @@ void _z_liveliness_init(_z_session_t *zn) {
     zn->_remote_tokens = _z_keyexpr_intmap_make();
     zn->_local_tokens = _z_declared_keyexpr_intmap_make();
 #if Z_FEATURE_QUERY == 1
-    zn->_liveliness_query_id = 1;
     zn->_liveliness_pending_queries = _z_liveliness_pending_query_intmap_make();
 #endif
 
